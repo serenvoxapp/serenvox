@@ -15,3 +15,8 @@
 -keep class com.tom_roush.pdfbox.** { *; }
 -keep class com.tom_roush.fontbox.** { *; }
 -keep class com.tom_roush.harmony.** { *; }
+
+# PdfBox-Android: reflection + resource loading
+-keep class com.tom_roush.** { *; }
+-dontwarn com.tom_roush.**
+-keepattributes Signature,InnerClasses,EnclosingMethod

@@ -23,6 +23,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.serenvox.app.tts.VoiceCatalog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -72,6 +83,7 @@ fun ReadScreen(
     onMoreVoices: () -> Unit,
     onExport: () -> Unit,
     onSeek: (Int) -> Unit,
+    importStatus: String = "Reading your document…",
 ) {
     Column(Modifier.fillMaxSize()) {
         ScreenTitle(title.ifBlank { "Read" }, if (text.isBlank()) "Listen to anything, offline" else "${text.length} characters") {
@@ -95,7 +107,7 @@ fun ReadScreen(
                 importing -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(strokeWidth = 3.dp)
                     Spacer(Modifier.height(12.dp))
-                    Text("Reading your document…", style = MaterialTheme.typography.bodyMedium)
+                    Text(importStatus, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                 }
                 player.status != Status.IDLE && player.chunks.isNotEmpty() -> ReaderView(player, onSeek)
                 text.isBlank() -> EmptyRead(onImport, onTextChange)
@@ -184,9 +196,14 @@ fun PlayerBar(
                 style = MaterialTheme.typography.labelSmall, color = c.onSurfaceVariant)
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            IconButton(onClick = onSleep) {
-                BadgedBox(badge = { if (sleepMinutesLeft != null) Badge { Text("${sleepMinutesLeft}m") } }) {
-                    Icon(Icons.Outlined.Bedtime, "Sleep timer", tint = if (sleepMinutesLeft != null) c.primary else c.onSurfaceVariant)
+            Row(Modifier.clip(CircleShape).clickable(onClickLabel = "Sleep timer", onClick = onSleep)
+                .then(if (sleepMinutesLeft != null) Modifier.background(c.primaryContainer) else Modifier)
+                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp).padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                Icon(Icons.Outlined.Bedtime, "Sleep timer", Modifier.size(22.dp), tint = if (sleepMinutesLeft != null) c.primary else c.onSurfaceVariant)
+                if (sleepMinutesLeft != null) {
+                    Spacer(Modifier.width(4.dp))
+                    Text("${sleepMinutesLeft}m", style = MaterialTheme.typography.labelMedium, color = c.onPrimaryContainer, maxLines = 1, softWrap = false)
                 }
             }
             IconButton(onClick = onBack, enabled = player.status != Status.IDLE) { Icon(Icons.Default.FastRewind, "Previous sentence", Modifier.size(30.dp)) }
@@ -262,18 +279,34 @@ fun VoicesScreen(
     voices: List<VoiceInfo>, states: Map<String, VoiceState>, selected: String, speaker: Int,
     onDownload: (VoiceInfo) -> Unit, onUse: (String) -> Unit, onSample: (String) -> Unit, onDelete: (VoiceInfo) -> Unit,
     onSpeaker: (Int) -> Unit,
+    previewing: String? = null, onPreview: (String) -> Unit = {},
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { ScreenTitle("Voices", "Natural AI voices that run fully on your phone") }
         item {
             VoiceCard("system", "System voice", "Android's built-in voice · always available", null, VoiceState.Installed,
-                selected == "system", { }, { onUse("system") }, { onSample("system") }, null)
+                selected == "system", { }, { onUse("system") }, { onSample("system") }, null, null, false, {})
         }
         items(voices, key = { it.id }) { v ->
             VoiceCard(v.id, v.name, "${v.description} · ${v.locale}", "${v.licence} · ${v.sizeMb} MB",
                 states[v.id] ?: VoiceState.NotInstalled, selected == v.id,
-                { onDownload(v) }, { onUse(v.id) }, { onSample(v.id) }, { onDelete(v) })
-            if (v.id == "en_US-libritts-high" && selected == v.id) {
+                { onDownload(v) }, { onUse(v.id) }, { onSample(v.id) }, { onDelete(v) },
+                VoiceCatalog.sampleKey(v.id, speaker), previewing == VoiceCatalog.sampleKey(v.id, speaker), onPreview)
+            if (v.id == VoiceCatalog.LIBRITTS) {
+                Row(Modifier.padding(horizontal = 24.dp, vertical = 2.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Featured", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    VoiceCatalog.featuredSpeakers.forEach { sp ->
+                        val key = VoiceCatalog.sampleKey(v.id, sp)!!
+                        val on = previewing == key
+                        FilterChip(selected = on || (selected == v.id && speaker == sp),
+                            onClick = { onSpeaker(sp); onPreview(key) }, shape = CircleShape,
+                            leadingIcon = { if (on) PlayingBars(Modifier.size(16.dp)) else Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp)) },
+                            label = { Text("#$sp") })
+                    }
+                }
+            }
+            if (v.id == VoiceCatalog.LIBRITTS && selected == v.id) {
                 Column(Modifier.padding(horizontal = 32.dp)) {
                     Text("Speaker #$speaker of 904", style = MaterialTheme.typography.labelLarge)
                     Slider(speaker.toFloat(), { onSpeaker(it.roundToInt()) }, valueRange = 0f..903f)
@@ -287,6 +320,7 @@ fun VoicesScreen(
 private fun VoiceCard(
     id: String, name: String, desc: String, meta: String?, state: VoiceState, selected: Boolean,
     onDownload: () -> Unit, onUse: () -> Unit, onSample: () -> Unit, onDelete: (() -> Unit)?,
+    sampleKey: String?, previewing: Boolean, onPreview: (String) -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clip(RoundedCornerShape(24.dp))
@@ -302,7 +336,8 @@ private fun VoiceCard(
                 Text(desc, style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
                 if (meta != null) Text(meta, style = MaterialTheme.typography.labelSmall, color = c.onSurfaceVariant)
             }
-            if (state == VoiceState.Installed) FilledTonalIconButton(onClick = onSample) { Icon(Icons.Default.PlayArrow, "Play sample") }
+            if (sampleKey != null) PreviewButton(previewing) { onPreview(sampleKey) }
+            else if (state == VoiceState.Installed) FilledTonalIconButton(onClick = onSample) { Icon(Icons.Default.PlayArrow, "Play sample") }
         }
         Spacer(Modifier.height(12.dp))
         when (state) {
@@ -374,6 +409,7 @@ fun SettingsScreen(
     privacyOptions: Boolean, version: String,
     onTheme: (ThemeMode) -> Unit, onDynamic: (Boolean) -> Unit, onBuy: () -> Unit, onRestore: () -> Unit,
     onPrivacyOptions: () -> Unit, onLicences: () -> Unit, onPrivacy: () -> Unit, onSource: () -> Unit,
+    onTerms: () -> Unit = {}, onSupport: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
         ScreenTitle("Settings")
@@ -414,6 +450,8 @@ fun SettingsScreen(
                 SettingRow(Icons.Outlined.Restore, "Restore purchase", onClick = onRestore)
                 if (privacyOptions) SettingRow(Icons.Outlined.PrivacyTip, "Ad consent options", onClick = onPrivacyOptions)
                 SettingRow(Icons.Outlined.Policy, "Privacy policy", onClick = onPrivacy)
+                SettingRow(Icons.Outlined.Description, "Terms of use", onClick = onTerms)
+                SettingRow(Icons.Outlined.HelpOutline, "Help & support", onClick = onSupport)
             }
             Text("About", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 8.dp))
             SectionCard {
@@ -431,9 +469,11 @@ fun SettingsScreen(
 fun OnboardingScreen(
     voices: List<VoiceInfo>, states: Map<String, VoiceState>, chosen: String,
     onChoose: (String) -> Unit, onDownload: () -> Unit, onSkip: () -> Unit,
+    previewing: String? = null, onPreview: (String) -> Unit = {},
 ) {
     val state = states[chosen]
-    Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+        .windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 24.dp, vertical = 16.dp)) {
         Spacer(Modifier.height(24.dp))
         Box(Modifier.size(84.dp).clip(RoundedCornerShape(28.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF9D8CFF), Color(0xFF5A3FD6)))), contentAlignment = Alignment.Center) {
@@ -446,6 +486,7 @@ fun OnboardingScreen(
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(28.dp))
         Text("Pick your first voice", style = MaterialTheme.typography.titleMedium)
+        Text("Tap ▶ to hear a voice before you download it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
         voices.filter { it.sizeMb < 100 }.forEach { v ->
             val sel = v.id == chosen
@@ -458,6 +499,7 @@ fun OnboardingScreen(
                     Text(v.name, style = MaterialTheme.typography.titleSmall)
                     Text("${v.description} · ${v.sizeMb} MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                VoiceCatalog.sampleKey(v.id)?.let { k -> PreviewButton(previewing == k) { onPreview(k) } }
                 RadioButton(sel, { onChoose(v.id) })
             }
         }
@@ -473,5 +515,36 @@ fun OnboardingScreen(
         TextButton(onClick = onSkip, Modifier.fillMaxWidth()) { Text("Skip for now — use the system voice") }
         Text("Voices are a one-time download (Wi-Fi recommended) and then work without internet.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ------------------------------------------------------------------ Voice preview
+
+/** Round play/stop button for an offline voice preview, with animated bars while playing. */
+@Composable
+fun PreviewButton(playing: Boolean, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val pulse = rememberInfiniteTransition(label = "pulse")
+    val ring by pulse.animateFloat(1f, 1.25f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "ring")
+    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+        if (playing) Box(Modifier.size(40.dp).graphicsLayer { scaleX = ring; scaleY = ring }.clip(CircleShape).background(c.primary.copy(alpha = 0.18f)))
+        FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(40.dp).semantics { contentDescription = if (playing) "Stop preview" else "Play preview" },
+            colors = if (playing) IconButtonDefaults.filledTonalIconButtonColors(containerColor = c.primary, contentColor = c.onPrimary)
+                     else IconButtonDefaults.filledTonalIconButtonColors()) {
+            if (playing) PlayingBars(Modifier.size(18.dp), c.onPrimary) else Icon(Icons.Default.PlayArrow, null)
+        }
+    }
+}
+
+/** Three bouncing equaliser bars. */
+@Composable
+fun PlayingBars(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+    val t = rememberInfiniteTransition(label = "bars")
+    val hs = listOf(0, 180, 360).map { d ->
+        t.animateFloat(0.3f, 1f, infiniteRepeatable(tween(420, delayMillis = 0), RepeatMode.Reverse, initialStartOffset = StartOffset(d)), label = "b$d")
+    }
+    Row(modifier, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        hs.forEach { h -> Box(Modifier.width(3.dp).fillMaxHeight(h.value).clip(CircleShape).background(color)) }
     }
 }

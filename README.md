@@ -28,7 +28,7 @@ Copyright 2026 Ryan Lu. Serenvox is licensed under the **GNU General Public Lice
 
 **Additional permission under GNU GPL version 3 section 7:** If you modify this Program, or any covered work, by
 linking or combining it with the Google Mobile Ads SDK (and its Google Play services dependencies), the Google
-User Messaging Platform SDK, or the Google Play Billing Library (or a modified version of those libraries),
+User Messaging Platform SDK, the Google Play Billing Library, or Google ML Kit (including ML Kit Text Recognition) (or a modified version of those libraries),
 containing parts covered by the terms of their respective Google licence agreements, the licensors of this
 Program grant you additional permission to convey the resulting work. Corresponding Source for a non-source form
 of such a combination shall not include the source code for the parts of those libraries used as well as that of
@@ -44,7 +44,7 @@ components such as eSpeak NG.
 | [Piper](https://github.com/rhasspy/piper) / piper-phonemize | MIT |
 | Apache Commons Compress | Apache-2.0 |
 | AndroidX, Jetpack Compose, Kotlin, kotlinx.coroutines | Apache-2.0 |
-| Google Mobile Ads SDK, UMP SDK, Play Billing Library | Proprietary (Google terms) |
+| Google Mobile Ads SDK, UMP SDK, Play Billing Library, ML Kit Text Recognition (on-device OCR) | Proprietary (Google terms) |
 
 ## Voice credits (downloaded at runtime, not in this repo)
 | Voice | Source data | Licence |

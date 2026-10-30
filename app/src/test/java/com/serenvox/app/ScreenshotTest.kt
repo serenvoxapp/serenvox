@@ -7,6 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
@@ -67,11 +69,11 @@ class ScreenshotTest {
         Box(Modifier.weight(1f)) { ReadScreen("", "", PlayerState(), voices, "system", false, null, false, {}, {}, {}, {}, {}, {}, {}) }
         PlayerBar(PlayerState(), 1f, null, false, {}, {}, {}, {}, {}, {})
     }
-    @Composable private fun voicesScreen() = VoicesScreen(VoiceCatalog.voices, states, "en_US-ljspeech-medium", 0, {}, {}, {}, {}, {})
+    @Composable private fun voicesScreen() = VoicesScreen(VoiceCatalog.voices, states, "en_US-ljspeech-medium", 20, {}, {}, {}, {}, {}, previewing = "en_US-libritts-high_20")
     @Composable private fun library() = LibraryScreen(lib, {}, {}, {})
-    @Composable private fun settings() = SettingsScreen(com.serenvox.app.ThemeMode.SYSTEM, false, true, false, "US$2.99", true, "1.1.0",
+    @Composable private fun settings() = SettingsScreen(com.serenvox.app.ThemeMode.SYSTEM, false, true, false, "US$2.99", true, "1.1.1",
         {}, {}, {}, {}, {}, {}, {}, {})
-    @Composable private fun onboarding() = OnboardingScreen(VoiceCatalog.voices, emptyMap(), "en_US-ljspeech-medium", {}, {}, {})
+    @Composable private fun onboarding() = OnboardingScreen(VoiceCatalog.voices, emptyMap(), "en_US-ljspeech-medium", {}, {}, {}, previewing = "en_US-kristin-medium")
     @Composable private fun speedSheet() = Column { Box(Modifier.weight(1f)) {}; SpeedSheetContent(1.25f, 1f, {}, {}); SleepSheetContent(true) {} }
 
     @Test fun read_light() = shot("1_read_player", false) { readPlaying() }
@@ -86,6 +88,8 @@ class ScreenshotTest {
     @Test fun settings_dark() = shot("5_settings", true) { settings() }
     @Test fun onboarding_light() = shot("6_onboarding", false) { onboarding() }
     @Test fun onboarding_dark() = shot("6_onboarding", true) { onboarding() }
+    @Config(qualifiers = "w360dp-h640dp-xxhdpi")
+    @Test fun onboardingTall_light() = shot("8_onboarding_previews_small_screen", false) { onboarding() }
     @Test fun sheets_light() = shot("7_speed_sleep_sheets", false) { speedSheet() }
     @Test fun sheets_dark() = shot("7_speed_sleep_sheets", true) { speedSheet() }
 }

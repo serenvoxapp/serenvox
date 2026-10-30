@@ -8,7 +8,7 @@ object Licences {
     val text: String get() = buildString {
         appendLine("ABOUT SERENVOX")
         appendLine()
-        appendLine("Serenvox is free and open-source software: Copyright 2026 Ryan Lu, licensed under the GNU General Public License v3.0 or later, with an additional permission (GPL section 7) for linking with Google Play services, AdMob, UMP and Play Billing libraries.")
+        appendLine("Serenvox is free and open-source software: Copyright 2026 Ryan Lu, licensed under the GNU General Public License v3.0 or later, with an additional permission (GPL section 7) for linking with Google Play services, AdMob, UMP, Play Billing and ML Kit libraries.")
         appendLine("Complete source code: $SOURCE_URL")
         appendLine("This program comes with ABSOLUTELY NO WARRANTY. See https://www.gnu.org/licenses/gpl-3.0.html")
         appendLine()
@@ -34,7 +34,7 @@ object Licences {
         appendLine("• piper-phonemize — MIT License")
         appendLine("• Apache Commons Compress — Apache License 2.0")
         appendLine("• AndroidX, Jetpack Compose, Kotlin, kotlinx.coroutines — Apache License 2.0")
-        appendLine("• Google Mobile Ads SDK, User Messaging Platform SDK, Play Billing Library — Google terms (https://developers.google.com/terms)")
+        appendLine("• Google Mobile Ads SDK, User Messaging Platform SDK, Play Billing Library, ML Kit Text Recognition (on-device OCR) — Google terms (https://developers.google.com/terms)")
         appendLine()
         appendLine("Full licence texts: Apache-2.0 https://www.apache.org/licenses/LICENSE-2.0 · MIT https://opensource.org/license/mit · GPL-3.0 https://www.gnu.org/licenses/gpl-3.0.html")
     }

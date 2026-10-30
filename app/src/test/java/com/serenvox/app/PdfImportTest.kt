@@ -8,6 +8,7 @@ import com.serenvox.app.doc.DocumentImporter
 import com.serenvox.app.doc.ImportException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -38,6 +39,13 @@ class PdfImportTest {
         val pdf = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
             "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF"
         val e = runCatching { DocumentImporter(ctx).import(fileUri("scan.pdf", pdf.toByteArray())) }.exceptionOrNull()
-        assertTrue(e is ImportException); assertTrue(e!!.message!!.contains("No text found"))
+        assertTrue(e is ImportException); assertEquals(DocumentImporter.BLANK_PDF, e!!.message)
+    }
+
+    /** The real file from a phone test: Chromium "Save as PDF" of an empty page. */
+    @Test fun chromiumBlankPdfSaysBlank() = runBlocking {
+        val bytes = javaClass.classLoader!!.getResourceAsStream("blank-chromium.pdf").readBytes()
+        val e = runCatching { DocumentImporter(ctx).import(fileUri("user-test.pdf", bytes)) }.exceptionOrNull()
+        assertTrue(e is ImportException); assertEquals(DocumentImporter.BLANK_PDF, e!!.message)
     }
 }

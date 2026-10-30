@@ -71,9 +71,13 @@ fun AppRoot(activity: MainActivity, app: SerenvoxApp) {
             LaunchedEffect(voiceStates[chosen]) {
                 if (voiceStates[chosen] == VoiceState.Installed) { prefs.setVoice(chosen); prefs.setOnboarded() }
             }
+            val samples = remember { com.serenvox.app.tts.SamplePlayer(activity) }
+            val previewing by samples.playing.collectAsStateWithLifecycle()
+            DisposableEffect(Unit) { onDispose { samples.stop() } }
+            LaunchedEffect(chosen) { samples.stop() }
             Surface { OnboardingScreen(VoiceCatalog.voices, voiceStates, chosen, { chosen = it },
-                { val v = VoiceCatalog.byId(chosen)!!; scope.launch { app.voices.download(v) } },
-                { prefs.setOnboarded() }) }
+                { samples.stop(); val v = VoiceCatalog.byId(chosen)!!; scope.launch { app.voices.download(v) } },
+                { samples.stop(); prefs.setOnboarded() }, previewing, { samples.toggle(it) }) }
             return@SerenvoxTheme
         }
         MainShell(activity, app)
@@ -102,6 +106,8 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
     var title by rememberSaveable { mutableStateOf(prefs.currentTitle) }
     var docId by rememberSaveable { mutableStateOf(prefs.currentDoc) }
     var importing by remember { mutableStateOf(false) }
+    var importStatus by remember { mutableStateOf("Reading your document…") }
+    var importError by remember { mutableStateOf<String?>(null) }
     var exporting by remember { mutableStateOf<Float?>(null) }
     var speedSheet by remember { mutableStateOf(false) }
     var sleepSheet by remember { mutableStateOf(false) }
@@ -118,14 +124,22 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
     fun importUri(uri: Uri, mime: String?) {
         scope.launch {
             importing = true; tab = Tab.READ; player.stop()
-            runCatching { app.importer.import(uri, mime) }
+            importStatus = "Reading your document…"
+            runCatching { app.importer.import(uri, mime) { s -> scope.launch { importStatus = s } } }
                 .onSuccess { d ->
                     val item = app.library.add(d.title, d.kind, d.text)
                     text = d.text; title = d.title; docId = item.id
                 }
-                .onFailure { Toast.makeText(activity, it.message ?: "Import failed", Toast.LENGTH_LONG).show() }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it
+                    android.util.Log.e("SerenvoxImport", "Import failed", it)
+                    importError = it.message ?: "Import failed (${it.javaClass.simpleName})." }
             importing = false
         }
+    }
+    importError?.let { m ->
+        AlertDialog(onDismissRequest = { importError = null },
+            title = { Text("Couldn't import") }, text = { Text(m) },
+            confirmButton = { TextButton(onClick = { importError = null }) { Text("OK") } })
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { importUri(it, null) } }
     val launchImport = { picker.launch(DocumentImporter.MIME_TYPES) }
@@ -173,7 +187,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                 when (t) {
                     Tab.READ -> Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) {
-                            ReadScreen(title, text, state, voiceOptions, activeVoice, importing, exporting,
+                            ReadScreen(title, text, state, voiceOptions, activeVoice, importing, importStatus = importStatus, exportProgress = exporting,
                                 canExport = activeVoice != Prefs.SYSTEM_VOICE,
                                 onTextChange = { text = it; if (docId != null) { docId = null; title = "" } },
                                 onImport = launchImport,
@@ -201,15 +215,22 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                         PlayerBar(state, speed, sleepLeft, text.isNotBlank() && !importing, ::playPause,
                             { player.skip(-1) }, { player.skip(1) }, { speedSheet = true }, { sleepSheet = true }, { player.stop() })
                     }
-                    Tab.VOICES -> VoicesScreen(VoiceCatalog.voices, voiceStates, activeVoice, speaker,
+                    Tab.VOICES -> {
+                      val samples = remember { com.serenvox.app.tts.SamplePlayer(activity) }
+                      val previewing by samples.playing.collectAsStateWithLifecycle()
+                      DisposableEffect(Unit) { onDispose { samples.stop() } }
+                      LaunchedEffect(activeVoice) { samples.stop() }
+                      VoicesScreen(VoiceCatalog.voices, voiceStates, activeVoice, speaker,
                         onDownload = { v -> scope.launch { app.voices.download(v); if (app.voices.isInstalled(v.id) && prefs.voice.value == Prefs.SYSTEM_VOICE) prefs.setVoice(v.id) } },
                         onUse = { player.stop(); prefs.setVoice(it) },
-                        onSample = { id ->
+                        onSample = { id -> samples.stop()
                             val name = VoiceCatalog.byId(id)?.name?.substringBefore(" (") ?: "your system voice"
                             player.play("Hi, I'm $name. I can read your documents aloud, right here on your phone.", id, speed, pitch, speaker)
                         },
                         onDelete = { v -> player.stop(); app.voices.delete(v); if (prefs.voice.value == v.id) prefs.setVoice(Prefs.SYSTEM_VOICE) },
-                        onSpeaker = { prefs.setSpeaker(it) })
+                        onSpeaker = { prefs.setSpeaker(it) },
+                        previewing = previewing, onPreview = { player.stop(); samples.toggle(it) })
+                    }
                     Tab.LIBRARY -> LibraryScreen(library,
                         onOpen = { item ->
                             app.library.text(item.id)?.let { player.stop(); text = it; title = item.title; docId = item.id; app.library.touch(item.id); tab = Tab.READ }
@@ -224,7 +245,9 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                             BuildConfig.VERSION_NAME, prefs::setTheme, prefs::setDynamicColor, { app.billing.buy(activity) }, { app.billing.restore() },
                             { activity.ads.showPrivacyOptions() }, { licences = true },
                             { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))) },
-                            { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL))) })
+                            { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL))) },
+                            onTerms = { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TERMS_URL))) },
+                            onSupport = { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SUPPORT_URL))) })
                     }
                 }
             }
@@ -264,6 +287,9 @@ private fun BannerAd() {
 }
 
 // TODO: replace with the URL where store/privacy-policy.html is hosted.
-const val PRIVACY_URL = "https://example.com/serenvox/privacy"
+const val PRIVACY_URL = "https://serenvox.com/privacy/"
+const val TERMS_URL = "https://serenvox.com/terms/"
+const val SUPPORT_URL = "https://serenvox.com/support/"
+const val WEBSITE_URL = "https://serenvox.com/"
 // TODO: replace with the public source repository URL (required for GPL-3 compliance).
 const val SOURCE_URL = "https://github.com/OWNER/serenvox"

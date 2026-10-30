@@ -34,5 +34,16 @@ object VoiceCatalog {
             "Public domain", "Cori voice from LibriVox recordings (public domain); Piper voice."),
     )
 
+    /** LibriTTS speakers with a bundled preview clip. */
+    val featuredSpeakers = listOf(0, 20, 100, 300, 600)
+    const val LIBRITTS = "en_US-libritts-high"
+
+    /** Asset key (assets/samples/<key>.m4a) of the offline preview clip for a voice. */
+    fun sampleKey(id: String, speaker: Int = 0): String? = when {
+        id == LIBRITTS -> "${LIBRITTS}_${if (speaker in featuredSpeakers) speaker else 0}"
+        voices.any { it.id == id } -> id
+        else -> null
+    }
+
     fun byId(id: String) = voices.firstOrNull { it.id == id }
 }

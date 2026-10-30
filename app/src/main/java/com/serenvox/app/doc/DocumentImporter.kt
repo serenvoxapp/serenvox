@@ -5,6 +5,7 @@ package com.serenvox.app.doc
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
@@ -14,11 +15,14 @@ import kotlinx.coroutines.withContext
 
 data class ImportedDoc(val title: String, val text: String, val kind: String)
 
-class ImportException(message: String) : Exception(message)
+class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** Turns PDF, Word (.docx/.doc), EPUB, HTML and plain-text files into speakable text, fully offline. */
 class DocumentImporter(private val context: Context) {
     companion object {
+        private const val TAG = "SerenvoxImport"
+        const val BLANK_PDF = "This PDF appears to be blank, with no text or images. Try re-saving or re-exporting it."
+        const val MAX_OCR_PAGES = 300
         const val MAX_BYTES = 60L shl 20
         val MIME_TYPES = arrayOf(
             "application/pdf", "text/plain", "text/html", "application/epub+zip", "application/msword",
@@ -29,7 +33,7 @@ class DocumentImporter(private val context: Context) {
 
     private var pdfReady = false
 
-    suspend fun import(uri: Uri, mimeHint: String? = null): ImportedDoc = withContext(Dispatchers.IO) {
+    suspend fun import(uri: Uri, mimeHint: String? = null, onProgress: (String) -> Unit = {}): ImportedDoc = withContext(Dispatchers.IO) {
         val cr = context.contentResolver
         var name = "Document"; var size = -1L
         runCatching {
@@ -44,7 +48,7 @@ class DocumentImporter(private val context: Context) {
         val title = name.substringBeforeLast('.').ifBlank { "Document" }
         val text = try {
             when (kind) {
-                "pdf" -> pdf(bytes)
+                "pdf" -> pdf(bytes, onProgress)
                 "docx" -> OfficeExtractors.docx(bytes)
                 "doc" -> try { OfficeExtractors.doc(bytes) } catch (e: Exception) {
                     throw ImportException("This older Word (.doc) file couldn't be read. Open it in Word or Google Docs and save it as .docx, then import it again.")
@@ -56,10 +60,11 @@ class DocumentImporter(private val context: Context) {
         } catch (e: ImportException) { throw e } catch (e: OutOfMemoryError) {
             throw ImportException("This file is too large to open on this device.")
         } catch (e: Exception) {
-            throw ImportException("Couldn't read this file: ${e.message ?: e.javaClass.simpleName}")
+            Log.e(TAG, "Import failed ($kind, $name)", e)
+            throw ImportException("Couldn't read this file (${e.javaClass.simpleName}: ${e.message ?: "no details"}).", e)
         }
         if (text.isBlank()) throw ImportException(
-            if (kind == "pdf") "No text found. This PDF looks like scanned images; Serenvox can only read PDFs that contain real text."
+            if (kind == "pdf") "No text found in this PDF, even with text recognition (OCR). The pages may be blank or the scan too faint."
             else "No readable text found in this file.")
         ImportedDoc(title, text, kind)
     }
@@ -80,18 +85,38 @@ class DocumentImporter(private val context: Context) {
         }
     }
 
-    private fun pdf(bytes: ByteArray): String {
-        if (!pdfReady) { PDFBoxResourceLoader.init(context.applicationContext); pdfReady = true }
-        val doc = try { PDDocument.load(bytes) } catch (e: InvalidPasswordException) {
-            throw ImportException("This PDF is password-protected.")
-        }
-        return doc.use { d ->
-            val stripper = PDFTextStripper().apply { sortByPosition = true }
-            val pages = (1..d.numberOfPages).map { p ->
-                stripper.startPage = p; stripper.endPage = p
-                stripper.getText(d)
+    private suspend fun pdf(bytes: ByteArray, onProgress: (String) -> Unit): String {
+        onProgress("Reading PDF…")
+        var hasImages = true
+        val extracted: String? = try {
+            if (!pdfReady) { PDFBoxResourceLoader.init(context.applicationContext); pdfReady = true }
+            PDDocument.load(bytes).use { d ->
+                val pages = (1..d.numberOfPages).map { p ->
+                    onProgress("Reading page $p of ${d.numberOfPages}…")
+                    try {
+                        PDFTextStripper().apply { sortByPosition = true; startPage = p; endPage = p }.getText(d)
+                    } catch (e: Exception) { Log.w(TAG, "Text extraction failed on page $p", e); "" }
+                }
+                hasImages = d.pages.any { pg -> runCatching { pg.resources?.xObjectNames?.any() == true }.getOrDefault(true) }
+                Log.i(TAG, "PdfBox extracted ${pages.sumOf { it.trim().length }} chars from ${pages.size} pages")
+                TextCleanup.cleanPages(pages)
             }
-            TextCleanup.cleanPages(pages)
+        } catch (e: InvalidPasswordException) {
+            throw ImportException("This PDF is password-protected. Remove the password and import it again.", e)
+        } catch (e: Exception) {
+            // Don't hide the failure: log it and try the platform renderer + OCR instead.
+            Log.e(TAG, "PdfBox failed to parse the PDF", e); null
         }
+        // Treat almost-empty output (e.g. only page numbers) as "no text layer".
+        if (extracted != null && extracted.count { it.isLetterOrDigit() } >= 20) return extracted
+        if (extracted != null && !hasImages) throw ImportException(BLANK_PDF)
+        val ocr = try {
+            PdfOcr.recognise(context, bytes, MAX_OCR_PAGES) { page, total -> onProgress("Recognising text (OCR): page $page of $total…") }
+        } catch (e: ImportException) { throw e } catch (e: Exception) {
+            Log.e(TAG, "OCR failed", e)
+            throw ImportException("Couldn't read this PDF (${e.javaClass.simpleName}: ${e.message ?: "no details"}).", e)
+        }
+        if (ocr.isBlank()) throw ImportException(BLANK_PDF)
+        return ocr
     }
 }

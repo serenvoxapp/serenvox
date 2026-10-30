@@ -57,3 +57,11 @@ components such as eSpeak NG.
 
 Voices are Piper VITS models (trained by Michael Hansen / rhasspy) converted by the sherpa-onnx project.
 Voices trained on the lessac (research-only) or non-commercial datasets are deliberately excluded.
+
+### Additional third-party components (1.1.0)
+| Component | Licence |
+|---|---|
+| PdfBox-Android (com.tom-roush) | Apache-2.0 |
+| Inter typeface | SIL OFL 1.1 (third_party/Inter-OFL.txt) |
+
+Import formats: PDF (text-based), Word .docx and legacy .doc, EPUB, TXT, HTML.

@@ -56,19 +56,65 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
     private var systemReady = false
     private var systemParams: Triple<Float, Float, Int>? = null
 
-    fun play(text: String, voiceId: String, speed: Float, pitch: Float, speaker: Int) {
-        val chunks = Chunker.split(text)
+    private data class Args(val voiceId: String, val speed: Float, val pitch: Float, val speaker: Int)
+    private var lastArgs: Args? = null
+
+    private val _sleepEndsAt = MutableStateFlow<Long?>(null)
+    /** Wall-clock millis when the sleep timer pauses playback, or null when off. */
+    val sleepEndsAt: StateFlow<Long?> = _sleepEndsAt
+    private var sleepJob: Job? = null
+
+    fun play(text: String, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int = 0) =
+        playChunks(Chunker.split(text), voiceId, speed, pitch, speaker, from)
+
+    private fun playChunks(chunks: List<String>, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int) {
         if (chunks.isEmpty()) return
+        lastArgs = Args(voiceId, speed, pitch, speaker)
+        val start = from.coerceIn(0, chunks.lastIndex)
         scope.launch {
             stopInternal()
             paused = false
-            if (voices.isInstalled(voiceId)) playNeural(chunks, voiceId, speed, pitch, speaker)
-            else playSystem(chunks, speed, pitch, 0)
+            if (voices.isInstalled(voiceId)) playNeural(chunks, voiceId, speed, pitch, speaker, start)
+            else playSystem(chunks, speed, pitch, start)
         }
     }
 
-    private fun playNeural(chunks: List<String>, voiceId: String, speed: Float, pitch: Float, speaker: Int) {
-        _state.value = PlayerState(Status.PREPARING, chunks, 0, VoiceCatalog.byId(voiceId)?.name ?: voiceId)
+    /** Jumps [delta] sentences from the current one, keeping playing/paused state. */
+    fun skip(delta: Int) {
+        val s = _state.value; val a = lastArgs ?: return
+        if (s.chunks.isEmpty() || s.status == Status.IDLE) return
+        playChunks(s.chunks, a.voiceId, a.speed, a.pitch, a.speaker, s.index + delta)
+    }
+
+    /** Starts speaking from sentence [index] of the current text. */
+    fun seekTo(index: Int) {
+        val s = _state.value; val a = lastArgs ?: return
+        if (s.chunks.isEmpty() || s.status == Status.IDLE) return
+        playChunks(s.chunks, a.voiceId, a.speed, a.pitch, a.speaker, index)
+    }
+
+    /** Applies new speed/pitch immediately by restarting at the current sentence. */
+    fun updateParams(speed: Float, pitch: Float) {
+        val s = _state.value; val a = lastArgs ?: return
+        if (s.status == Status.IDLE) return
+        if (a.speed == speed && a.pitch == pitch) return
+        playChunks(s.chunks, a.voiceId, speed, pitch, a.speaker, s.index)
+    }
+
+    /** Pauses playback after [minutes]; null cancels. */
+    fun setSleepTimer(minutes: Int?) {
+        sleepJob?.cancel(); sleepJob = null
+        if (minutes == null) { _sleepEndsAt.value = null; return }
+        val end = System.currentTimeMillis() + minutes * 60_000L
+        _sleepEndsAt.value = end
+        sleepJob = scope.launch {
+            delay(minutes * 60_000L)
+            pause(); _sleepEndsAt.value = null
+        }
+    }
+
+    private fun playNeural(chunks: List<String>, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int) {
+        _state.value = PlayerState(Status.PREPARING, chunks, from, VoiceCatalog.byId(voiceId)?.name ?: voiceId)
         job = scope.launch {
             try {
                 val tts = voices.load(voiceId)
@@ -93,7 +139,8 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
                 // Producer: synthesise up to 2 sentences ahead.
                 val queue = Channel<Pair<Int, FloatArray>>(capacity = 2)
                 val producer = launch(Dispatchers.Default) {
-                    for ((i, c) in chunks.withIndex()) {
+                    for (i in from until chunks.size) {
+                        val c = chunks[i]
                         val audio = tts.generate(text = c, sid = sid, speed = speed)
                         queue.send(i to audio.samples)
                     }

@@ -26,6 +26,8 @@ object Licences {
         appendLine("SOFTWARE")
         appendLine()
         appendLine("• sherpa-onnx — Apache License 2.0 — https://github.com/k2-fsa/sherpa-onnx")
+        appendLine("• PdfBox-Android (PDF text extraction) — Apache License 2.0 — https://github.com/TomRoush/PdfBox-Android")
+        appendLine("• Inter typeface by Rasmus Andersson — SIL Open Font License 1.1 — https://rsms.me/inter/")
         appendLine("• ONNX Runtime — MIT License — https://github.com/microsoft/onnxruntime")
         appendLine("• eSpeak NG (phonemizer, linked inside the sherpa-onnx native library) — GNU GPL v3 or later — https://github.com/espeak-ng/espeak-ng")
         appendLine("  The complete corresponding source of this app, including build files and the exact third-party versions used, is at $SOURCE_URL")

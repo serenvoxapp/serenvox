@@ -25,6 +25,19 @@ class Prefs(context: Context) {
     private val _speaker = MutableStateFlow(sp.getInt("speaker", 0))
     val speaker: StateFlow<Int> = _speaker
 
+    private val _dynamic = MutableStateFlow(sp.getBoolean("dynamicColor", false))
+    val dynamicColor: StateFlow<Boolean> = _dynamic
+    private val _onboarded = MutableStateFlow(sp.getBoolean("onboarded", false))
+    val onboarded: StateFlow<Boolean> = _onboarded
+    fun setDynamicColor(v: Boolean) { _dynamic.value = v; sp.edit().putBoolean("dynamicColor", v).apply() }
+    fun setOnboarded() { _onboarded.value = true; sp.edit().putBoolean("onboarded", true).apply() }
+    var currentDoc: String?
+        get() = sp.getString("currentDoc", null)
+        set(v) { sp.edit().putString("currentDoc", v).apply() }
+    var currentTitle: String
+        get() = sp.getString("currentTitle", "") ?: ""
+        set(v) { sp.edit().putString("currentTitle", v).apply() }
+
     var exportCount: Int
         get() = sp.getInt("exports", 0)
         set(v) { sp.edit().putInt("exports", v).apply() }

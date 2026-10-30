@@ -29,8 +29,8 @@ android {
         applicationId = "com.serenvox.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         manifestPlaceholders["admobAppId"] = adsProps.getProperty("admob.appId")
         buildConfigField("String", "BANNER_ID", "\"${adsProps.getProperty("admob.bannerId")}\"")
         buildConfigField("String", "INTERSTITIAL_ID", "\"${adsProps.getProperty("admob.interstitialId")}\"")
@@ -75,6 +75,14 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    testOptions { unitTests {
+        isIncludeAndroidResources = true
+        all {
+            it.systemProperty("roborazzi.test.record", "true")
+            it.systemProperty("screenshots.dir", rootProject.file("screenshots").absolutePath)
+            it.maxHeapSize = "1536m"
+        }
+    } }
     packaging { jniLibs { useLegacyPackaging = false } }
     lint { abortOnError = true; checkReleaseBuilds = true; disable += listOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "OldTargetApi", "UseKtx") }
 }
@@ -101,5 +109,12 @@ dependencies {
     implementation("com.google.android.ump:user-messaging-platform:3.2.0")
     implementation("com.android.billingclient:billing-ktx:8.0.0")
 
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

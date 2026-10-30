@@ -3,10 +3,16 @@
 package com.serenvox.app.ui
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -14,17 +20,14 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
@@ -35,60 +38,52 @@ import com.google.android.gms.ads.AdView
 import com.serenvox.app.BuildConfig
 import com.serenvox.app.MainActivity
 import com.serenvox.app.Prefs
-import com.serenvox.app.R
 import com.serenvox.app.SerenvoxApp
 import com.serenvox.app.ThemeMode
+import com.serenvox.app.doc.DocumentImporter
 import com.serenvox.app.tts.PlaybackService
 import com.serenvox.app.tts.Status
 import com.serenvox.app.tts.VoiceCatalog
 import com.serenvox.app.tts.VoiceState
+import com.serenvox.app.ui.theme.SerenvoxTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
-import kotlin.math.roundToInt
 
-private enum class Screen { MAIN, VOICES, SETTINGS, LICENCES }
+enum class Tab(val label: String, val icon: ImageVector) {
+    READ("Read", Icons.Outlined.AutoStories), VOICES("Voices", Icons.Outlined.RecordVoiceOver),
+    LIBRARY("Library", Icons.AutoMirrored.Outlined.LibraryBooks), SETTINGS("Settings", Icons.Outlined.Settings)
+}
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot(activity: MainActivity, app: SerenvoxApp) {
-    val theme by app.prefs.theme.collectAsStateWithLifecycle()
-    val dark = when (theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
-    val ctx = activity
-    val scheme = if (android.os.Build.VERSION.SDK_INT >= 31) {
-        if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
-    } else if (dark) darkColorScheme() else lightColorScheme()
-    MaterialTheme(colorScheme = scheme) {
-        var screen by rememberSaveable { mutableStateOf(Screen.MAIN) }
-        BackHandler(screen != Screen.MAIN) { screen = if (screen == Screen.LICENCES) Screen.SETTINGS else Screen.MAIN }
-        val msg by app.billing.message.collectAsStateWithLifecycle()
-        LaunchedEffect(msg) { msg?.let { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show(); app.billing.clearMessage() } }
-        when (screen) {
-            Screen.MAIN -> MainScreen(activity, app, { screen = Screen.VOICES }, { screen = Screen.SETTINGS })
-            Screen.VOICES -> VoicesScreen(app) { screen = Screen.MAIN }
-            Screen.SETTINGS -> SettingsScreen(activity, app, { screen = Screen.LICENCES }) { screen = Screen.MAIN }
-            Screen.LICENCES -> SimpleScreen("Open-source licences", { screen = Screen.SETTINGS }) {
-                SelectionContainer { Text(Licences.text, style = MaterialTheme.typography.bodySmall) }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SimpleScreen(title: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Scaffold(topBar = {
-        TopAppBar(title = { Text(title) }, navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        })
-    }) { pad ->
-        Column(Modifier.padding(pad).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()), content = content)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun MainScreen(activity: MainActivity, app: SerenvoxApp, openVoices: () -> Unit, openSettings: () -> Unit) {
     val prefs = app.prefs
-    val player = app.player
+    val theme by prefs.theme.collectAsStateWithLifecycle()
+    val dynamic by prefs.dynamicColor.collectAsStateWithLifecycle()
+    val dark = when (theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
+    SerenvoxTheme(dark, dynamic) {
+        val onboarded by prefs.onboarded.collectAsStateWithLifecycle()
+        val voiceStates by app.voices.states.collectAsStateWithLifecycle()
+        val scope = rememberCoroutineScope()
+        if (!onboarded) {
+            var chosen by rememberSaveable { mutableStateOf(VoiceCatalog.voices.first().id) }
+            LaunchedEffect(voiceStates[chosen]) {
+                if (voiceStates[chosen] == VoiceState.Installed) { prefs.setVoice(chosen); prefs.setOnboarded() }
+            }
+            Surface { OnboardingScreen(VoiceCatalog.voices, voiceStates, chosen, { chosen = it },
+                { val v = VoiceCatalog.byId(chosen)!!; scope.launch { app.voices.download(v) } },
+                { prefs.setOnboarded() }) }
+            return@SerenvoxTheme
+        }
+        MainShell(activity, app)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
+    val prefs = app.prefs; val player = app.player
     val state by player.state.collectAsStateWithLifecycle()
     val speed by prefs.speed.collectAsStateWithLifecycle()
     val pitch by prefs.pitch.collectAsStateWithLifecycle()
@@ -97,119 +92,161 @@ private fun MainScreen(activity: MainActivity, app: SerenvoxApp, openVoices: () 
     val voiceStates by app.voices.states.collectAsStateWithLifecycle()
     val adFree by app.billing.adFree.collectAsStateWithLifecycle()
     val adsReady by activity.ads.ready.collectAsStateWithLifecycle()
-    var text by rememberSaveable { mutableStateOf(prefs.lastText) }
-    val incoming by activity.incomingText
-    LaunchedEffect(incoming) { incoming?.let { text = it; activity.incomingText.value = null } }
-    LaunchedEffect(text) { prefs.lastText = text.take(100_000) }
+    val library by app.library.items.collectAsStateWithLifecycle()
+    val sleepEnd by player.sleepEndsAt.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+
+    var tab by rememberSaveable { mutableStateOf(Tab.READ) }
+    var licences by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable { mutableStateOf(prefs.lastText) }
+    var title by rememberSaveable { mutableStateOf(prefs.currentTitle) }
+    var docId by rememberSaveable { mutableStateOf(prefs.currentDoc) }
+    var importing by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf<Float?>(null) }
+    var speedSheet by remember { mutableStateOf(false) }
+    var sleepSheet by remember { mutableStateOf(false) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(sleepEnd) { while (sleepEnd != null) { now = System.currentTimeMillis(); delay(15_000) } }
+    val sleepLeft = sleepEnd?.let { (((it - now) + 59_999) / 60_000).toInt().coerceAtLeast(1) }
 
-    val installed = VoiceCatalog.voices.filter { voiceStates[it.id] == VoiceState.Installed }
+    LaunchedEffect(text) { prefs.lastText = text.take(500_000) }
+    LaunchedEffect(title, docId) { prefs.currentTitle = title; prefs.currentDoc = docId }
+    LaunchedEffect(state.index, docId) { docId?.let { if (state.status != Status.IDLE) app.library.setPosition(it, state.index) } }
+    val msg by app.billing.message.collectAsStateWithLifecycle()
+    LaunchedEffect(msg) { msg?.let { Toast.makeText(activity, it, Toast.LENGTH_LONG).show(); app.billing.clearMessage() } }
+
+    fun importUri(uri: Uri, mime: String?) {
+        scope.launch {
+            importing = true; tab = Tab.READ; player.stop()
+            runCatching { app.importer.import(uri, mime) }
+                .onSuccess { d ->
+                    val item = app.library.add(d.title, d.kind, d.text)
+                    text = d.text; title = d.title; docId = item.id
+                }
+                .onFailure { Toast.makeText(activity, it.message ?: "Import failed", Toast.LENGTH_LONG).show() }
+            importing = false
+        }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { importUri(it, null) } }
+    val launchImport = { picker.launch(DocumentImporter.MIME_TYPES) }
+
+    val incomingText by activity.incomingText
+    LaunchedEffect(incomingText) { incomingText?.let { text = it; title = "Shared text"; docId = null; tab = Tab.READ; activity.incomingText.value = null } }
+    val incomingUri by activity.incomingUri
+    LaunchedEffect(incomingUri) { incomingUri?.let { (u, m) -> activity.incomingUri.value = null; importUri(u, m) } }
+
     val activeVoice = if (voiceStates[voice] == VoiceState.Installed) voice else Prefs.SYSTEM_VOICE
+    val voiceOptions = listOf(VoiceOption(Prefs.SYSTEM_VOICE, "System")) +
+        VoiceCatalog.voices.filter { voiceStates[it.id] == VoiceState.Installed }.map { VoiceOption(it.id, it.name.substringBefore(" (")) }
 
-    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { activity.readText(it) }?.let { text = it }
+    fun playPause() {
+        when (state.status) {
+            Status.PLAYING, Status.PREPARING -> player.pause()
+            Status.PAUSED -> player.resume()
+            Status.IDLE -> if (text.isNotBlank()) {
+                val from = docId?.let { id -> library.firstOrNull { it.id == id }?.position } ?: 0
+                player.play(text, activeVoice, speed, pitch, speaker, from)
+                PlaybackService.start(activity)
+            }
+        }
     }
 
+    BackHandler(licences || tab != Tab.READ) { if (licences) licences = false else tab = Tab.READ }
+
+    if (licences) { LicencesPage { licences = false }; return }
+
     Scaffold(
-        topBar = {
-            TopAppBar(title = { Text(activity.getString(R.string.app_name)) }, actions = {
-                IconButton(onClick = { importer.launch(arrayOf("text/plain")) }) { Icon(Icons.Default.FileOpen, "Import .txt") }
-                IconButton(onClick = openVoices) { Icon(Icons.Default.RecordVoiceOver, "Voices") }
-                IconButton(onClick = openSettings) { Icon(Icons.Default.Settings, "Settings") }
-            })
-        },
-        bottomBar = { if (!adFree && adsReady) BannerAd() }
+        bottomBar = {
+            Column {
+                if (tab != Tab.READ && state.status != Status.IDLE) MiniPlayer(title, state, { tab = Tab.READ }, ::playPause)
+                if (!adFree && adsReady) BannerAd()
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                    Tab.entries.forEach { t ->
+                        NavigationBarItem(tab == t, { tab = t }, { Icon(t.icon, null) }, label = { Text(t.label) })
+                    }
+                }
+            }
+        }
     ) { pad ->
-        Column(Modifier.padding(pad).padding(horizontal = 16.dp).fillMaxSize().verticalScroll(rememberScrollState())) {
-            if (state.status == Status.IDLE) {
-                OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 360.dp),
-                    label = { Text("Type or paste text") })
-            } else {
-                // Highlight the sentence being spoken.
-                Card(Modifier.fillMaxWidth().heightIn(min = 180.dp)) {
-                    Text(buildAnnotatedString {
-                        state.chunks.forEachIndexed { i, c ->
-                            if (i == state.index) withStyle(SpanStyle(fontWeight = FontWeight.Bold,
-                                background = MaterialTheme.colorScheme.primaryContainer)) { append(c) }
-                            else append(c)
-                            append(' ')
+        Box(Modifier.padding(pad).consumeWindowInsets(pad).statusBarsPadding().fillMaxSize()) {
+            AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "tab") { t ->
+                when (t) {
+                    Tab.READ -> Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) {
+                            ReadScreen(title, text, state, voiceOptions, activeVoice, importing, exporting,
+                                canExport = activeVoice != Prefs.SYSTEM_VOICE,
+                                onTextChange = { text = it; if (docId != null) { docId = null; title = "" } },
+                                onImport = launchImport,
+                                onClear = { text = ""; title = ""; docId = null },
+                                onVoice = { player.stop(); prefs.setVoice(it) },
+                                onMoreVoices = { tab = Tab.VOICES },
+                                onExport = {
+                                    val out = File(activity.cacheDir, "exports").apply { mkdirs() }.let { File(it, "serenvox.wav") }
+                                    scope.launch {
+                                        exporting = 0f
+                                        val r = runCatching { player.exportWav(text, activeVoice, speed, speaker, out) { exporting = it } }
+                                        exporting = null
+                                        r.onSuccess {
+                                            val uri = FileProvider.getUriForFile(activity, activity.packageName + ".files", out)
+                                            activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                                                type = "audio/wav"; putExtra(Intent.EXTRA_STREAM, uri)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }, "Share audio"))
+                                            activity.ads.maybeShowAfterExport(adFree, player.state.value.status != Status.IDLE)
+                                        }.onFailure { Toast.makeText(activity, "Export failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                                    }
+                                },
+                                onSeek = { player.seekTo(it) })
                         }
-                    }, Modifier.padding(12.dp))
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.fillMaxWidth())
-            Text(when (state.status) {
-                Status.IDLE -> state.error ?: "${text.length} characters"
-                Status.PREPARING -> "Loading voice…"
-                else -> "Sentence ${state.index + 1} of ${state.chunks.size} · ${state.engine}"
-            }, style = MaterialTheme.typography.labelMedium)
-
-            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                FilledIconButton(onClick = {
-                    when (state.status) {
-                        Status.PLAYING, Status.PREPARING -> player.pause()
-                        Status.PAUSED -> player.resume()
-                        Status.IDLE -> {
-                            player.play(text, activeVoice, speed, pitch, speaker)
-                            PlaybackService.start(activity)
-                        }
+                        PlayerBar(state, speed, sleepLeft, text.isNotBlank() && !importing, ::playPause,
+                            { player.skip(-1) }, { player.skip(1) }, { speedSheet = true }, { sleepSheet = true }, { player.stop() })
                     }
-                }, Modifier.size(64.dp), enabled = text.isNotBlank()) {
-                    Icon(if (state.status == Status.PLAYING) Icons.Default.Pause else Icons.Default.PlayArrow, "Play/Pause")
-                }
-                FilledTonalIconButton(onClick = { player.stop() }, Modifier.size(64.dp), enabled = state.status != Status.IDLE) {
-                    Icon(Icons.Default.Stop, "Stop")
-                }
-                FilledTonalIconButton(onClick = {
-                    val out = File(activity.cacheDir, "exports").apply { mkdirs() }.let { File(it, "serenvox.wav") }
-                    scope.launch {
-                        exporting = 0f
-                        val r = runCatching { player.exportWav(text, activeVoice, speed, speaker, out) { exporting = it } }
-                        exporting = null
-                        r.onSuccess {
-                            val uri = FileProvider.getUriForFile(activity, activity.packageName + ".files", out)
-                            activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                                type = "audio/wav"; putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }, "Share audio"))
-                            activity.ads.maybeShowAfterExport(adFree, player.state.value.status != Status.IDLE)
-                        }.onFailure { Toast.makeText(activity, "Export failed: ${it.message}", Toast.LENGTH_LONG).show() }
+                    Tab.VOICES -> VoicesScreen(VoiceCatalog.voices, voiceStates, activeVoice, speaker,
+                        onDownload = { v -> scope.launch { app.voices.download(v); if (app.voices.isInstalled(v.id) && prefs.voice.value == Prefs.SYSTEM_VOICE) prefs.setVoice(v.id) } },
+                        onUse = { player.stop(); prefs.setVoice(it) },
+                        onSample = { id ->
+                            val name = VoiceCatalog.byId(id)?.name?.substringBefore(" (") ?: "your system voice"
+                            player.play("Hi, I'm $name. I can read your documents aloud, right here on your phone.", id, speed, pitch, speaker)
+                        },
+                        onDelete = { v -> player.stop(); app.voices.delete(v); if (prefs.voice.value == v.id) prefs.setVoice(Prefs.SYSTEM_VOICE) },
+                        onSpeaker = { prefs.setSpeaker(it) })
+                    Tab.LIBRARY -> LibraryScreen(library,
+                        onOpen = { item ->
+                            app.library.text(item.id)?.let { player.stop(); text = it; title = item.title; docId = item.id; app.library.touch(item.id); tab = Tab.READ }
+                        },
+                        onDelete = { app.library.delete(it.id); if (docId == it.id) docId = null },
+                        onImport = launchImport)
+                    Tab.SETTINGS -> {
+                        val theme by prefs.theme.collectAsStateWithLifecycle()
+                        val dyn by prefs.dynamicColor.collectAsStateWithLifecycle()
+                        val price by app.billing.price.collectAsStateWithLifecycle()
+                        SettingsScreen(theme, dyn, Build.VERSION.SDK_INT >= 31, adFree, price, activity.ads.privacyOptionsRequired,
+                            BuildConfig.VERSION_NAME, prefs::setTheme, prefs::setDynamicColor, { app.billing.buy(activity) }, { app.billing.restore() },
+                            { activity.ads.showPrivacyOptions() }, { licences = true },
+                            { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))) },
+                            { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL))) })
                     }
-                }, Modifier.size(64.dp),
-                    enabled = text.isNotBlank() && exporting == null && activeVoice != Prefs.SYSTEM_VOICE && state.status == Status.IDLE) {
-                    Icon(Icons.Default.Download, "Export WAV")
                 }
             }
-            exporting?.let { LinearProgressIndicator(progress = { it }, Modifier.fillMaxWidth()); Text("Exporting WAV… ${(it * 100).roundToInt()}%") }
+        }
+    }
 
-            // Voice picker
-            var open by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(open, { open = it }) {
-                OutlinedTextField(
-                    value = VoiceCatalog.byId(activeVoice)?.name ?: "System voice (Android)", onValueChange = {}, readOnly = true,
-                    label = { Text("Voice") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) },
-                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth())
-                ExposedDropdownMenu(open, { open = false }) {
-                    DropdownMenuItem({ Text("System voice (Android)") }, { prefs.setVoice(Prefs.SYSTEM_VOICE); open = false })
-                    installed.forEach { v -> DropdownMenuItem({ Text("${v.name} · neural") }, { prefs.setVoice(v.id); open = false }) }
-                    DropdownMenuItem({ Text("Get more voices…") }, { open = false; openVoices() })
-                }
-            }
-            if (activeVoice == Prefs.SYSTEM_VOICE) {
-                TextButton(onClick = openVoices) { Text("Tip: download a free offline AI voice for smoother speech") }
-            }
-            if (activeVoice == "en_US-libritts-high") {
-                Text("Speaker #$speaker")
-                Slider(speaker.toFloat(), { prefs.setSpeaker(it.roundToInt()) }, valueRange = 0f..903f)
-            }
-            Text("Speed ${"%.2f".format(speed)}×")
-            Slider(speed, { prefs.setSpeed(it) }, valueRange = 0.5f..2f)
-            Text("Pitch ${"%.2f".format(pitch)}")
-            Slider(pitch, { prefs.setPitch(it) }, valueRange = 0.5f..2f)
-            Text("Speed/pitch apply from the next time you press play.", style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(16.dp))
+    if (speedSheet) ModalBottomSheet({ speedSheet = false }) {
+        SpeedSheetContent(speed, pitch, { prefs.setSpeed(it); player.updateParams(it, pitch) }, { prefs.setPitch(it); player.updateParams(speed, it) })
+    }
+    if (sleepSheet) ModalBottomSheet({ sleepSheet = false }) {
+        SleepSheetContent(sleepEnd != null) { player.setSleepTimer(it); sleepSheet = false }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LicencesPage(onBack: () -> Unit) {
+    Scaffold(topBar = {
+        TopAppBar(title = { Text("Licences") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
+    }) { pad ->
+        Column(Modifier.padding(pad).padding(20.dp).fillMaxSize().verticalScroll(rememberScrollState())) {
+            SelectionContainer { Text(Licences.text, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
@@ -217,86 +254,13 @@ private fun MainScreen(activity: MainActivity, app: SerenvoxApp, openVoices: () 
 @Composable
 private fun BannerAd() {
     val width = LocalConfiguration.current.screenWidthDp
-    AndroidView(modifier = Modifier.fillMaxWidth().navigationBarsPadding(), factory = { c ->
+    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { c ->
         AdView(c).apply {
             adUnitId = BuildConfig.BANNER_ID
             setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(c, width))
             loadAd(AdRequest.Builder().build())
         }
     })
-}
-
-@Composable
-private fun VoicesScreen(app: SerenvoxApp, onBack: () -> Unit) {
-    val states by app.voices.states.collectAsStateWithLifecycle()
-    val current by app.prefs.voice.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    SimpleScreen("Voices", onBack) {
-        Text("Neural voices run fully on your device and work offline after a one-time download (Wi-Fi recommended).",
-            style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(8.dp))
-        VoiceCatalog.voices.forEach { v ->
-            val s = states[v.id] ?: VoiceState.NotInstalled
-            Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(v.name + if (current == v.id) "  ✓" else "", style = MaterialTheme.typography.titleMedium)
-                    Text("${v.description} · ${v.locale} · ~${v.sizeMb} MB download · ${v.licence}", style = MaterialTheme.typography.bodySmall)
-                    when (s) {
-                        is VoiceState.Downloading -> { LinearProgressIndicator(progress = { s.progress }, Modifier.fillMaxWidth().padding(top = 8.dp)) }
-                        VoiceState.Installing -> { LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp)); Text("Installing…") }
-                        else -> Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (s is VoiceState.Failed) Text("Failed: ${s.message}", color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
-                            if (s == VoiceState.Installed) {
-                                TextButton(onClick = { app.prefs.setVoice(v.id) }) { Text("Use") }
-                                TextButton(onClick = {
-                                    app.player.play("Hello! This is ${v.name}, an offline voice from Serenvox.", v.id, 1f, 1f, 0)
-                                }) { Text("Preview") }
-                                TextButton(onClick = {
-                                    app.player.stop(); app.voices.delete(v)
-                                    if (current == v.id) app.prefs.setVoice(Prefs.SYSTEM_VOICE)
-                                }) { Text("Delete") }
-                            } else {
-                                TextButton(onClick = { scope.launch { app.voices.download(v); if (app.voices.isInstalled(v.id) && current == Prefs.SYSTEM_VOICE) app.prefs.setVoice(v.id) } }) { Text("Download") }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsScreen(activity: MainActivity, app: SerenvoxApp, openLicences: () -> Unit, onBack: () -> Unit) {
-    val theme by app.prefs.theme.collectAsStateWithLifecycle()
-    val adFree by app.billing.adFree.collectAsStateWithLifecycle()
-    val price by app.billing.price.collectAsStateWithLifecycle()
-    SimpleScreen("Settings", onBack) {
-        Text("Theme", style = MaterialTheme.typography.titleMedium)
-        ThemeMode.entries.forEach { m ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(theme == m, { app.prefs.setTheme(m) })
-                Text(m.name.lowercase().replaceFirstChar { it.uppercase() })
-            }
-        }
-        HorizontalDivider(Modifier.padding(vertical = 12.dp))
-        Text("Ads", style = MaterialTheme.typography.titleMedium)
-        if (adFree) Text("Ads removed — thank you for supporting the app!")
-        else Button(onClick = { app.billing.buy(activity) }) { Text("Remove ads" + (price?.let { " ($it)" } ?: "")) }
-        OutlinedButton(onClick = { app.billing.restore() }) { Text("Restore purchase") }
-        if (activity.ads.privacyOptionsRequired) {
-            OutlinedButton(onClick = { activity.ads.showPrivacyOptions() }) { Text("Privacy / ad consent options") }
-        }
-        HorizontalDivider(Modifier.padding(vertical = 12.dp))
-        TextButton(onClick = openLicences) { Text("About, licences & voice credits") }
-        TextButton(onClick = {
-            activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(PRIVACY_URL)))
-        }) { Text("Privacy policy") }
-        TextButton(onClick = {
-            activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(SOURCE_URL)))
-        }) { Text("Source code (GPL-3.0)") }
-        Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
-    }
 }
 
 // TODO: replace with the URL where store/privacy-policy.html is hosted.

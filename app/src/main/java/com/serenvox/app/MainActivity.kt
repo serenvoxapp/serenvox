@@ -17,6 +17,8 @@ import com.serenvox.app.ui.AppRoot
 
 class MainActivity : ComponentActivity() {
     val incomingText = mutableStateOf<String?>(null)
+    /** A document opened via "Open with" or shared from another app, imported by the UI. */
+    val incomingUri = mutableStateOf<Pair<Uri, String?>?>(null)
     lateinit var ads: AdsManager; private set
     private val app get() = application as SerenvoxApp
 
@@ -39,9 +41,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        if (intent.action == Intent.ACTION_VIEW) { intent.data?.let { incomingUri.value = it to intent.type }; return }
+        if (intent.action == Intent.ACTION_SEND) streamUri(intent)?.let { incomingUri.value = it to intent.type; return }
         val text: String? = when (intent.action) {
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
-                ?: streamUri(intent)?.let { readText(it) }
             Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
             else -> null
         }
@@ -53,7 +56,4 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
         else i.getParcelableExtra(Intent.EXTRA_STREAM)
 
-    fun readText(uri: Uri): String? = runCatching {
-        contentResolver.openInputStream(uri)?.use { it.readBytes().take(2_000_000).toByteArray().toString(Charsets.UTF_8) }
-    }.getOrNull()
 }

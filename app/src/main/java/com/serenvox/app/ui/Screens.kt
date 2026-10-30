@@ -282,6 +282,7 @@ fun VoicesScreen(
     onSpeaker: (Int) -> Unit,
     previewing: String? = null, onPreview: (String) -> Unit = {},
     engineInstalled: Boolean = false,
+    onCancel: (VoiceInfo) -> Unit = {},
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { ScreenTitle("Voices", "Natural AI voices that run fully on your phone") }
@@ -299,7 +300,7 @@ fun VoicesScreen(
                 if (v.isKokoro) "${v.licence} · ${KokoroPack.sizeLabel(engineInstalled)}" else "${v.licence} · ${v.sizeMb} MB",
                 states[v.id] ?: VoiceState.NotInstalled, selected == v.id,
                 { onDownload(v) }, { onUse(v.id) }, { onSample(v.id) }, { onDelete(v) },
-                VoiceCatalog.sampleKey(v.id, speaker), previewing == VoiceCatalog.sampleKey(v.id, speaker), onPreview)
+                VoiceCatalog.sampleKey(v.id, speaker), previewing == VoiceCatalog.sampleKey(v.id, speaker), onPreview, { onCancel(v) })
             if (v.id == VoiceCatalog.LIBRITTS) {
                 Row(Modifier.padding(horizontal = 24.dp, vertical = 2.dp).horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -336,7 +337,7 @@ private fun SectionHeader(title: String, subtitle: String) {
 private fun VoiceCard(
     id: String, name: String, desc: String, meta: String?, state: VoiceState, selected: Boolean,
     onDownload: () -> Unit, onUse: () -> Unit, onSample: () -> Unit, onDelete: (() -> Unit)?,
-    sampleKey: String?, previewing: Boolean, onPreview: (String) -> Unit,
+    sampleKey: String?, previewing: Boolean, onPreview: (String) -> Unit, onCancel: () -> Unit = {},
 ) {
     val c = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clip(RoundedCornerShape(24.dp))
@@ -357,14 +358,14 @@ private fun VoiceCard(
         }
         Spacer(Modifier.height(12.dp))
         when (state) {
-            is VoiceState.Downloading -> LinearProgressIndicator(progress = { state.progress }, Modifier.fillMaxWidth().clip(CircleShape))
+            is VoiceState.Downloading -> DownloadProgress(state, onCancel)
             VoiceState.Installing -> { LinearProgressIndicator(Modifier.fillMaxWidth().clip(CircleShape)); Text("Installing…", style = MaterialTheme.typography.labelSmall) }
             VoiceState.Installed -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!selected) Button(onClick = onUse, shape = CircleShape) { Text("Use voice") }
                 if (onDelete != null) OutlinedButton(onClick = onDelete, shape = CircleShape) { Text("Remove") }
             }
             else -> Column {
-                if (state is VoiceState.Failed) Text("Download failed: ${state.message}", color = c.error, style = MaterialTheme.typography.bodySmall)
+                if (state is VoiceState.Failed) Text(state.message, color = c.error, style = MaterialTheme.typography.bodySmall)
                 Button(onClick = onDownload, shape = CircleShape) { Icon(Icons.Outlined.Download, null); Spacer(Modifier.width(6.dp)); Text("Download") }
             }
         }
@@ -487,6 +488,7 @@ fun OnboardingScreen(
     onChoose: (String) -> Unit, onDownload: () -> Unit, onSkip: () -> Unit,
     previewing: String? = null, onPreview: (String) -> Unit = {},
     engineInstalled: Boolean = false,
+    onCancel: () -> Unit = {},
 ) {
     val state = states[chosen]
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -527,10 +529,10 @@ fun OnboardingScreen(
         }
         Spacer(Modifier.height(20.dp))
         when (state) {
-            is VoiceState.Downloading -> { LinearProgressIndicator(progress = { state.progress }, Modifier.fillMaxWidth().clip(CircleShape)); Text("Downloading… ${(state.progress * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium) }
+            is VoiceState.Downloading -> DownloadProgress(state, onCancel)
             VoiceState.Installing -> { LinearProgressIndicator(Modifier.fillMaxWidth().clip(CircleShape)); Text("Installing…", style = MaterialTheme.typography.labelMedium) }
             else -> {
-                if (state is VoiceState.Failed) Text("Download failed: ${state.message}", color = MaterialTheme.colorScheme.error)
+                if (state is VoiceState.Failed) Text(state.message, color = MaterialTheme.colorScheme.error)
                 Button(onClick = onDownload, Modifier.fillMaxWidth().height(56.dp), shape = CircleShape) { Text("Download voice & start") }
             }
         }
@@ -568,5 +570,28 @@ fun PlayingBars(modifier: Modifier = Modifier, color: Color = MaterialTheme.colo
     }
     Row(modifier, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         hs.forEach { h -> Box(Modifier.width(3.dp).fillMaxHeight(h.value).clip(CircleShape).background(color)) }
+    }
+}
+
+/** Progress bar + status for a background voice download, with the "you can leave" note and Cancel. */
+@Composable
+fun DownloadProgress(state: VoiceState.Downloading, onCancel: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth()) {
+        LinearProgressIndicator(progress = { state.progress }, Modifier.fillMaxWidth().clip(CircleShape))
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                val pct = (state.progress * 100).roundToInt()
+                Text(when {
+                    state.waiting -> "Waiting for connection… $pct%"
+                    state.totalBytes > 0 -> "Downloading… $pct% · ${state.doneBytes / 1_000_000} of ${state.totalBytes / 1_000_000} MB"
+                    else -> "Downloading… $pct%"
+                }, style = MaterialTheme.typography.labelMedium)
+                Text("You can leave the app; the download continues in the background.",
+                    style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+            }
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        }
     }
 }

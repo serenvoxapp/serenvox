@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -78,7 +79,8 @@ fun AppRoot(activity: MainActivity, app: SerenvoxApp) {
             LaunchedEffect(chosen) { samples.stop() }
             Surface { OnboardingScreen(VoiceCatalog.voices, voiceStates, chosen, { chosen = it },
                 { samples.stop(); val v = VoiceCatalog.byId(chosen)!!; scope.launch { app.voices.download(v) } },
-                { samples.stop(); prefs.setOnboarded() }, previewing, { samples.toggle(it) }, engineInstalled) }
+                { samples.stop(); prefs.setOnboarded() }, previewing, { samples.toggle(it) }, engineInstalled,
+                { VoiceCatalog.byId(chosen)?.let { app.voices.cancelDownload(it) } }) }
             return@SerenvoxTheme
         }
         MainShell(activity, app)
@@ -97,6 +99,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
     val voiceStates by app.voices.states.collectAsStateWithLifecycle()
     val engineInstalled by app.voices.engineInstalled.collectAsStateWithLifecycle()
     val adFree by app.billing.adFree.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(adFree) { activity.ads.setAdFree(adFree) }
     val adsReady by activity.ads.ready.collectAsStateWithLifecycle()
     val library by app.library.items.collectAsStateWithLifecycle()
     val sleepEnd by player.sleepEndsAt.collectAsStateWithLifecycle()
@@ -204,11 +207,12 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                                         exporting = null
                                         r.onSuccess {
                                             val uri = FileProvider.getUriForFile(activity, activity.packageName + ".files", out)
-                                            activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                                                type = "audio/wav"; putExtra(Intent.EXTRA_STREAM, uri)
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            }, "Share audio"))
-                                            activity.ads.maybeShowAfterExport(adFree, player.state.value.status != Status.IDLE)
+                                            activity.ads.maybeShowAfterExport(adFree, player.state.value.status != Status.IDLE) {
+                                                activity.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                                                    type = "audio/wav"; putExtra(Intent.EXTRA_STREAM, uri)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }, "Share audio"))
+                                            }
                                         }.onFailure { Toast.makeText(activity, "Export failed: ${it.message}", Toast.LENGTH_LONG).show() }
                                     }
                                 },
@@ -223,7 +227,8 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                       DisposableEffect(Unit) { onDispose { samples.stop() } }
                       LaunchedEffect(activeVoice) { samples.stop() }
                       VoicesScreen(VoiceCatalog.voices, voiceStates, activeVoice, speaker,
-                        onDownload = { v -> scope.launch { app.voices.download(v); if (app.voices.isInstalled(v.id) && prefs.voice.value == Prefs.SYSTEM_VOICE) prefs.setVoice(v.id) } },
+                        onDownload = { v -> scope.launch { app.voices.download(v) } },
+                        onCancel = { v -> app.voices.cancelDownload(v) },
                         onUse = { player.stop(); prefs.setVoice(it) },
                         onSample = { id -> samples.stop()
                             val name = VoiceCatalog.byId(id)?.name?.substringBefore(" (") ?: "your system voice"
@@ -279,13 +284,24 @@ private fun LicencesPage(onBack: () -> Unit) {
 @Composable
 private fun BannerAd() {
     val width = LocalConfiguration.current.screenWidthDp
-    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { c ->
-        AdView(c).apply {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val view = androidx.compose.runtime.remember(width) {
+        AdView(ctx).apply {
             adUnitId = BuildConfig.BANNER_ID
-            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(c, width))
+            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(ctx, width))
             loadAd(AdRequest.Builder().build())
         }
-    })
+    }
+    val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(view, owner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            when (e) { androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> view.pause(); androidx.lifecycle.Lifecycle.Event.ON_RESUME -> view.resume(); else -> {} }
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs); view.destroy() }
+    }
+    // Reserve the anchored-banner height so the bar does not jump when the ad fills.
+    AndroidView(modifier = Modifier.fillMaxWidth().height(view.adSize?.height?.dp ?: 50.dp), factory = { view })
 }
 
 // TODO: replace with the URL where store/privacy-policy.html is hosted.

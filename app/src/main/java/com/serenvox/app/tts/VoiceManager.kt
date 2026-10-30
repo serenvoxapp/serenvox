@@ -12,6 +12,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
@@ -22,7 +25,8 @@ import kotlin.coroutines.coroutineContext
 
 sealed interface VoiceState {
     data object NotInstalled : VoiceState
-    data class Downloading(val progress: Float) : VoiceState
+    /** [waiting] = paused (no network / app in background / queued) and will resume by itself. */
+    data class Downloading(val progress: Float, val waiting: Boolean = false, val doneBytes: Long = 0, val totalBytes: Long = 0) : VoiceState
     data object Installing : VoiceState
     data object Installed : VoiceState
     data class Failed(val message: String) : VoiceState
@@ -50,33 +54,92 @@ class VoiceManager(private val context: Context) {
     /** True once the shared natural-voice engine is on the device (later natural voices are ~0.5 MB). */
     val engineInstalled: StateFlow<Boolean> = _engine
 
-    fun isInstalled(id: String) = VoiceCatalog.byId(id)?.let { installed(it) } == true
-    private fun set(id: String, s: VoiceState) { _states.value = _states.value + (id to s) }
-
-    /** Downloads [url] to [dest] reporting progress in [from]..[to]; verifies SHA-256 when given. */
-    private val downloader = Downloader()
-
-    private suspend fun fetch(url: String, dest: File, sha256: String?, id: String, from: Float, to: Float) {
-        val ctx = coroutineContext
-        var lastPct = -1
-        downloader.download(url, dest, sha256) { done, total ->
-            ctx.ensureActive()
-            if (total > 0) {
-                val pct = (done * 100 / total).toInt()
-                if (pct != lastPct) { lastPct = pct; set(id, VoiceState.Downloading(from + (to - from) * pct / 100f)) }
+    init {
+        // Re-attach to background downloads (also after the app was reopened or the process restarted).
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate).launch {
+            androidx.work.WorkManager.getInstance(context).getWorkInfosByTagFlow(VoiceDownloadWorker.TAG_ALL).collect { infos ->
+                for (info in infos) {
+                    val v = VoiceCatalog.byId(VoiceDownloadWorker.idOf(info) ?: continue) ?: continue
+                    val cur = _states.value[v.id]
+                    when (info.state) {
+                        androidx.work.WorkInfo.State.ENQUEUED, androidx.work.WorkInfo.State.BLOCKED ->
+                            if (!(cur is VoiceState.Downloading && cur.waiting)) set(v.id, VoiceState.Downloading(partialProgress(v), waiting = true))
+                        androidx.work.WorkInfo.State.RUNNING ->
+                            if (cur !is VoiceState.Downloading && cur != VoiceState.Installing) set(v.id, VoiceState.Downloading(partialProgress(v)))
+                        androidx.work.WorkInfo.State.CANCELLED -> if (cur is VoiceState.Downloading) discardPartial(v)
+                        androidx.work.WorkInfo.State.FAILED -> if (cur is VoiceState.Downloading || cur == VoiceState.Installing)
+                            set(v.id, VoiceState.Failed(info.outputData.getString(VoiceDownloadWorker.KEY_ERROR) ?: "Download failed. Tap Download to try again."))
+                        androidx.work.WorkInfo.State.SUCCEEDED -> if (installed(v)) set(v.id, VoiceState.Installed)
+                    }
+                }
             }
         }
     }
 
-    suspend fun download(v: VoiceInfo) = withContext(Dispatchers.IO) {
-        if (v.isKokoro) downloadKokoro(v) else downloadPiper(v)
+    fun isInstalled(id: String) = VoiceCatalog.byId(id)?.let { installed(it) } == true
+    private fun set(id: String, s: VoiceState) { _states.value = _states.value + (id to s) }
+
+    private val downloader = Downloader()
+    private val kokoroLock = kotlinx.coroutines.sync.Mutex()
+
+    /** Starts (or re-attaches to) the background download; returns when it finishes, fails or is cancelled. */
+    suspend fun download(v: VoiceInfo) {
+        VoiceDownloadWorker.enqueue(context, v.id)
+        if (_states.value[v.id] !is VoiceState.Downloading) set(v.id, VoiceState.Downloading(partialProgress(v), waiting = true))
+        _states.first { val s = it[v.id]; s is VoiceState.Installed || s is VoiceState.Failed || s is VoiceState.NotInstalled }
     }
 
-    private suspend fun downloadPiper(v: VoiceInfo) {
-        val tmp = File(context.cacheDir, "${v.archiveName}.tar.bz2")
+    fun cancelDownload(v: VoiceInfo) = VoiceDownloadWorker.cancel(context, v.id)
+
+    internal fun setState(id: String, s: VoiceState) = set(id, s)
+
+    /** Temp files live in noBackupFilesDir so a stopped download resumes from its .part file. */
+    private val tmpDir get() = File(context.noBackupFilesDir, "downloads").apply { mkdirs() }
+    private fun tmpFor(v: VoiceInfo) = if (v.isKokoro) File(tmpDir, KokoroPack.ENGINE_FILE) else File(tmpDir, "${v.archiveName}.tar.bz2")
+    private fun part(f: File) = File(f.path + ".part")
+
+    /** Progress implied by a leftover .part file (used while queued/paused, e.g. after the app was reopened). */
+    fun partialProgress(v: VoiceInfo): Float {
+        if (v.isKokoro && engineMarker().exists()) return 0f
+        val p = part(tmpFor(v)).length()
+        val total = if (v.isKokoro) KokoroPack.ENGINE_BYTES else v.sizeMb * 1_000_000L
+        return if (total > 0) (p.toFloat() / total).coerceIn(0f, .99f) else 0f
+    }
+
+    /** User cancelled: drop partial files (unless another voice is still using the shared engine download). */
+    fun discardPartial(v: VoiceInfo) {
+        if (!v.isKokoro) part(tmpFor(v)).delete()
+        else {
+            part(File(tmpDir, v.voiceFile)).delete()
+            val othersActive = VoiceCatalog.natural.any { it.id != v.id && _states.value[it.id] is VoiceState.Downloading }
+            if (!othersActive) part(tmpFor(v)).delete()
+        }
+        set(v.id, if (installed(v)) VoiceState.Installed else VoiceState.NotInstalled)
+    }
+
+    /** Runs the actual download+install (called by [VoiceDownloadWorker]); throws on failure. */
+    internal suspend fun runDownload(v: VoiceInfo, progress: (Float, Long, Long) -> Unit) = withContext(Dispatchers.IO) {
+        if (v.isKokoro) kokoroLock.withLock { downloadKokoro(v, progress) } else downloadPiper(v, progress)
+    }
+
+    private suspend fun fetch(urls: List<String>, dest: File, sha256: String?, from: Float, to: Float, progress: (Float, Long, Long) -> Unit) {
+        val ctx = coroutineContext
+        var lastPct = -1
+        kotlinx.coroutines.runInterruptible {
+            downloader.downloadAny(urls, dest, sha256) { done, total ->
+                ctx.ensureActive()
+                if (total > 0) {
+                    val pct = (done * 100 / total).toInt()
+                    if (pct != lastPct) { lastPct = pct; progress(from + (to - from) * pct / 100f, done, total) }
+                }
+            }
+        }
+    }
+
+    private suspend fun downloadPiper(v: VoiceInfo, progress: (Float, Long, Long) -> Unit) {
+        val tmp = tmpFor(v)
         try {
-            set(v.id, VoiceState.Downloading(0f))
-            fetch(v.url, tmp, null, v.id, 0f, 1f)
+            fetch(listOf(v.url), tmp, null, 0f, 1f, progress)
             set(v.id, VoiceState.Installing)
             dir(v).deleteRecursively()
             extract(tmp, root)
@@ -84,22 +147,19 @@ class VoiceManager(private val context: Context) {
             marker(v).writeText("ok")
             set(v.id, VoiceState.Installed)
         } catch (e: Exception) {
-            dir(v).deleteRecursively()
-            set(v.id, VoiceState.Failed(e.message ?: e.javaClass.simpleName))
-        } finally {
-            tmp.delete()
-        }
+            dir(v).deleteRecursively(); throw e
+        } finally { tmp.delete() }
     }
 
     /** Natural voice: engine once (if missing), then this speaker's style file written into voices.bin at its id. */
-    private suspend fun downloadKokoro(v: VoiceInfo) {
-        val tmp = File(context.cacheDir, KokoroPack.ENGINE_FILE)
-        val vtmp = File(context.cacheDir, v.voiceFile)
+    private suspend fun downloadKokoro(v: VoiceInfo, progress: (Float, Long, Long) -> Unit) {
+        if (installed(v)) { set(v.id, VoiceState.Installed); return }
+        val tmp = tmpFor(v)
+        val vtmp = File(tmpDir, v.voiceFile)
         try {
-            set(v.id, VoiceState.Downloading(0f))
             val needEngine = !engineMarker().exists()
             if (needEngine) {
-                fetch(KokoroPack.ENGINE_URL, tmp, KokoroPack.ENGINE_SHA256, v.id, 0f, .99f)
+                fetch(voicePackUrls(KokoroPack.ENGINE_FILE), tmp, KokoroPack.ENGINE_SHA256, 0f, .99f, progress)
                 set(v.id, VoiceState.Installing)
                 synchronized(this) { releaseKokoro() }
                 engineDir().deleteRecursively()
@@ -109,7 +169,7 @@ class VoiceManager(private val context: Context) {
                 _engine.value = true
                 tmp.delete()
             }
-            fetch(v.url, vtmp, KokoroPack.SHA256[v.voiceFile], v.id, if (needEngine) .99f else 0f, 1f)
+            fetch(voicePackUrls(v.voiceFile), vtmp, KokoroPack.SHA256[v.voiceFile], if (needEngine) .99f else 0f, 1f, progress)
             check(vtmp.length() == KokoroPack.SPEAKER_BYTES.toLong()) { "Voice file has the wrong size" }
             set(v.id, VoiceState.Installing)
             synchronized(this) {
@@ -120,10 +180,8 @@ class VoiceManager(private val context: Context) {
             set(v.id, VoiceState.Installed)
         } catch (e: Exception) {
             if (!engineMarker().exists()) engineDir().deleteRecursively()
-            set(v.id, VoiceState.Failed(e.message ?: e.javaClass.simpleName))
-        } finally {
-            tmp.delete(); vtmp.delete()
-        }
+            throw e
+        } finally { tmp.delete(); vtmp.delete() }
     }
 
     /** voices.bin keeps sherpa's full 54-speaker layout; speakers not downloaded stay zero-filled. */

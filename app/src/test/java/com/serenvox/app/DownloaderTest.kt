@@ -74,6 +74,62 @@ class DownloaderTest {
         } finally { ss.close() }
     }
 
+    /** Primary (GitHub) is tried first; on failure the mirror serves the same verified file. */
+    @Test fun fallsBackToMirrorInOrder() {
+        val data = ByteArray(1000) { it.toByte() }
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val ss = server { path, _, out ->
+            order += path
+            if (path.startsWith("/github")) out.write("HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+            else { out.write("HTTP/1.1 200 OK\r\nContent-Length: ${data.size}\r\nConnection: close\r\n\r\n".toByteArray()); out.write(data) }
+        }
+        try {
+            val dest = File(Files.createTempDirectory("dl").toFile(), "m")
+            val base = "http://127.0.0.1:${ss.localPort}"
+            val used = Downloader(maxAttempts = 2, sleep = noSleep, allowHttp = true)
+                .downloadAny(listOf("$base/github/f", "$base/mirror/f"), dest, sha(data))
+            assertEquals("$base/mirror/f", used)
+            assertEquals("/github/f", order.first())
+            assertEquals("/mirror/f", order.last())
+            assertTrue(dest.readBytes().contentEquals(data))
+        } finally { ss.close() }
+    }
+
+    /** Mirror 404 (not uploaded yet) must not hide the primary's real error. */
+    @Test fun mirror404SurfacesPrimaryError() {
+        val ss = server { path, _, out ->
+            val code = if (path.startsWith("/github")) "500 Server Error" else "404 Not Found"
+            out.write("HTTP/1.1 $code\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+        }
+        try {
+            val dest = File(Files.createTempDirectory("dl").toFile(), "n")
+            val base = "http://127.0.0.1:${ss.localPort}"
+            val e = runCatching { Downloader(maxAttempts = 1, sleep = noSleep, allowHttp = true)
+                .downloadAny(listOf("$base/github/f", "$base/mirror/f"), dest, "00") }.exceptionOrNull()
+            assertEquals(500, (e as Downloader.HttpException).code)
+            assertEquals(404, (e.suppressed.single() as Downloader.HttpException).code)
+        } finally { ss.close() }
+    }
+
+    @Test fun mirrorUrlsOrder() {
+        val u = com.serenvox.app.tts.voicePackUrls("kokoro-voice-heart.bin")
+        assertEquals(listOf(com.serenvox.app.tts.VOICE_PACK_BASE_URL + "kokoro-voice-heart.bin",
+            "https://serenvox.com/voice-packs/v1/kokoro-voice-heart.bin"), u)
+    }
+
+    @Test fun errorClassification() {
+        val uh = java.net.UnknownHostException("github.com")
+        assertTrue(Downloader.isRetryable(uh))
+        assertTrue(Downloader.friendlyMessage(uh).startsWith("Can't reach the download server"))
+        assertTrue(Downloader.isRetryable(java.net.SocketException("Software caused connection abort")))
+        assertTrue(Downloader.isRetryable(java.net.SocketTimeoutException()))
+        assertTrue(!Downloader.isRetryable(Downloader.ChecksumException()))
+        assertTrue(!Downloader.isRetryable(Downloader.HttpException(404)))
+        assertTrue(Downloader.isRetryable(Downloader.HttpException(503)))
+        assertTrue(Downloader.friendlyMessage(IOException("ENOSPC (No space left on device)")).startsWith("Not enough storage"))
+        assertTrue(Downloader.friendlyMessage(javax.net.ssl.SSLHandshakeException("x")).isNotBlank())
+    }
+
     /** Real GitHub release URLs. Run with SERENVOX_NET_TESTS=1 (engine too with =full). */
     @Test fun realReleaseUrls() {
         val mode = System.getenv("SERENVOX_NET_TESTS")

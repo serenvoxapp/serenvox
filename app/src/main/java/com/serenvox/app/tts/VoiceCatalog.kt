@@ -38,6 +38,10 @@ const val KOKORO_PACK = "kokoro-engine-v1_0-fp16"
  * (see dist/voice-packs/SHA256SUMS); the app rejects any file whose SHA-256 differs.
  */
 const val VOICE_PACK_BASE_URL = "https://github.com/serenvoxapp/serenvox/releases/download/voice-packs-v1/"
+/** Fallback mirror with identical files (same SHA-256), tried when the GitHub release can't be reached. */
+const val VOICE_PACK_MIRROR_URL = "https://serenvox.com/voice-packs/v1/"
+/** Download order for a natural-voice file: GitHub release first, then the serenvox.com mirror. */
+fun voicePackUrls(file: String) = listOf(VOICE_PACK_BASE_URL + file, VOICE_PACK_MIRROR_URL + file)
 
 object KokoroPack {
     const val ENGINE_FILE = "$KOKORO_PACK.tar.bz2"

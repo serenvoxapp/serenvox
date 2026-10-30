@@ -27,6 +27,22 @@ class Downloader(
 ) {
     class HttpException(val code: Int) : IOException("Download failed (HTTP $code)")
 
+    /**
+     * Tries each URL in order (same file, same [sha256]); a partial file from one source is resumed from
+     * the next. Returns the URL that worked. If all fail, throws the first source's error (a mirror 404
+     * just means the mirror isn't populated yet) with the others attached as suppressed.
+     */
+    fun downloadAny(urls: List<String>, dest: File, sha256: String?, onProgress: (Long, Long) -> Unit = { _, _ -> }): String {
+        val errors = mutableListOf<IOException>()
+        for (u in urls) {
+            try { download(u, dest, sha256, onProgress); return u } catch (e: IOException) { errors += e }
+        }
+        val first = errors.first()
+        // Prefer a more useful error than "mirror 404" or a checksum failure from a stale mirror.
+        errors.drop(1).forEach { first.addSuppressed(it) }
+        throw first
+    }
+
     /** [onProgress] gets (bytesDone, totalOrMinus1) and may throw (e.g. CancellationException) to abort. */
     fun download(url: String, dest: File, sha256: String?, onProgress: (Long, Long) -> Unit = { _, _ -> }) {
         val part = File(dest.path + ".part")
@@ -40,6 +56,8 @@ class Downloader(
                 if (e.code == 416) part.delete() // range past end: our partial is bad
                 else if (e.code in 400..499 && e.code != 408 && e.code != 429) throw e
                 if (++attempt >= maxAttempts) throw e
+            } catch (e: java.net.UnknownHostException) {
+                if (++attempt >= minOf(2, maxAttempts)) throw e // DNS failure: don't spin, try the mirror
             } catch (e: IOException) {
                 if (++attempt >= maxAttempts) throw e
             }
@@ -49,7 +67,7 @@ class Downloader(
             val got = sha256Of(part)
             if (!got.equals(sha256, ignoreCase = true)) {
                 part.delete()
-                throw IOException("Download corrupted (checksum mismatch)")
+                throw ChecksumException()
             }
         }
         dest.delete()
@@ -108,7 +126,47 @@ class Downloader(
         } finally { c.disconnect() }
     }
 
+    class ChecksumException : IOException("Download corrupted (checksum mismatch)")
+
     companion object {
+        private fun noSpace(e: Throwable) = generateSequence(e) { it.cause }.any {
+            val m = it.message ?: ""; m.contains("ENOSPC") || m.contains("No space left", ignoreCase = true)
+        }
+
+        /**
+         * True for failures that should pause and resume later (no network, DNS, timeouts, reset
+         * connections — e.g. Android cutting network when the app goes to the background), false for
+         * hard errors that retrying won't fix (bad checksum, 4xx, no storage, broken archive).
+         */
+        fun isRetryable(e: Throwable): Boolean = when {
+            e is ChecksumException -> false
+            noSpace(e) -> false
+            e is HttpException -> e.code >= 500 || e.code == 408 || e.code == 429 || e.suppressed.any { it is IOException && isRetryable(it) && it !is HttpException }
+            e is IOException -> true
+            else -> false
+        }
+
+        /** User-facing text for a download failure (the raw error is logged separately). */
+        fun friendlyMessage(e: Throwable): String {
+            val chain = generateSequence(e) { it.cause }.toList() + e.suppressed.toList()
+            val raw = chain.joinToString(" ") { (it.message ?: "") }
+            return when {
+                chain.any { it is java.net.UnknownHostException || it is java.net.ConnectException || it is java.net.NoRouteToHostException } ->
+                    "Can't reach the download server. Check your connection, VPN or Private DNS, then tap Download to resume."
+                raw.contains("ENOSPC") || raw.contains("No space left", ignoreCase = true) ->
+                    "Not enough storage. Free up about 350 MB, then tap Download to resume."
+                chain.any { it is java.net.SocketTimeoutException } ->
+                    "The download timed out. Check your connection, then tap Download to resume."
+                chain.any { it is javax.net.ssl.SSLException } ->
+                    "Couldn't make a secure connection to the download server. Check the phone's date and time, or try another network (some public Wi-Fi and filters block it)."
+                chain.any { it is ChecksumException } ->
+                    "The downloaded file was damaged. Tap Download to try again."
+                e is HttpException -> "The download server returned an error (HTTP ${e.code}). Please try again later."
+                e is IOException -> "The download was interrupted. Tap Download to resume."
+                else -> "Download failed: ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+
         fun sha256Of(f: File): String {
             val md = MessageDigest.getInstance("SHA-256")
             f.inputStream().use { i -> val b = ByteArray(1 shl 16); while (true) { val n = i.read(b); if (n < 0) break; md.update(b, 0, n) } }

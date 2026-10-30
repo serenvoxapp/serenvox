@@ -12,14 +12,32 @@ val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-// Real AdMob IDs live in git-ignored ads.properties; otherwise fall back to Google's test IDs.
+// AdMob: debug builds always use Google's TEST IDs. Release builds use git-ignored ads.properties;
+// without it they use test IDs for everything, so real and test IDs are never mixed.
+object TestAds {
+    const val APP = "ca-app-pub-3940256099942544~3347511713"
+    const val BANNER = "ca-app-pub-3940256099942544/9214589741"
+    const val INTERSTITIAL = "ca-app-pub-3940256099942544/1033173712"
+}
 val adsProps = Properties().apply {
-    setProperty("admob.appId", "ca-app-pub-3940256099942544~3347511713")
-    setProperty("admob.bannerId", "ca-app-pub-3940256099942544/9214589741")
-    setProperty("admob.interstitialId", "ca-app-pub-3940256099942544/1033173712")
     val f = rootProject.file("ads.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+fun adsProp(k: String) = adsProps.getProperty(k)?.trim().orEmpty()
+val releaseAds: Triple<String, String, String> = run {
+    val app = adsProp("admob.appId")
+    if (app.isEmpty()) Triple(TestAds.APP, TestAds.BANNER, "")
+    else {
+        val banner = adsProp("admob.bannerId")
+        val inter = adsProp("admob.interstitialId")
+        val pub = app.substringBefore("~")
+        require(!app.startsWith("ca-app-pub-3940256099942544")) { "ads.properties: admob.appId is Google's test ID" }
+        require(banner.startsWith("$pub/")) { "ads.properties: admob.bannerId must be a real unit of $pub" }
+        require(inter.isEmpty() || inter.startsWith("$pub/")) { "ads.properties: admob.interstitialId must be blank or a real unit of $pub" }
+        Triple(app, banner, inter)
+    }
+}
+fun str(v: String) = "\"" + v.replace("\"", "") + "\""
 
 android {
     namespace = "com.serenvox.app"
@@ -29,11 +47,9 @@ android {
         applicationId = "com.serenvox.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.2.2"
-        manifestPlaceholders["admobAppId"] = adsProps.getProperty("admob.appId")
-        buildConfigField("String", "BANNER_ID", "\"${adsProps.getProperty("admob.bannerId")}\"")
-        buildConfigField("String", "INTERSTITIAL_ID", "\"${adsProps.getProperty("admob.interstitialId")}\"")
+        versionCode = 7
+        versionName = "1.2.3"
+        buildConfigField("String", "ADS_TEST_DEVICE_IDS", str(adsProp("admob.testDeviceIds")))
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
@@ -54,8 +70,16 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (keystoreProps.isNotEmpty()) signingConfig = signingConfigs.getByName("release")
+            manifestPlaceholders["admobAppId"] = releaseAds.first
+            buildConfigField("String", "BANNER_ID", str(releaseAds.second))
+            buildConfigField("String", "INTERSTITIAL_ID", str(releaseAds.third))
         }
-        debug { applicationIdSuffix = ".debug" }
+        debug {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["admobAppId"] = TestAds.APP
+            buildConfigField("String", "BANNER_ID", str(TestAds.BANNER))
+            buildConfigField("String", "INTERSTITIAL_ID", str(TestAds.INTERSTITIAL))
+        }
     }
 
     // Per-ABI APKs for sideloading (the AAB is split by Play automatically).
@@ -105,6 +129,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.media:media:1.7.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     implementation("com.google.android.gms:play-services-ads:24.4.0")

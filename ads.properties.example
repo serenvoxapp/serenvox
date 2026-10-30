@@ -1,8 +1,10 @@
 # Copy to ads.properties (git-ignored) and put your real AdMob IDs there.
-# If ads.properties is missing, the build uses the Google TEST IDs below.
-# AdMob configuration. These defaults are GOOGLE TEST IDs - safe for development.
-# Before publishing, replace with your real IDs from https://apps.admob.com
+# Release builds use these. Debug builds ALWAYS use Google's test IDs, whatever is here.
+# If ads.properties is missing, release builds use Google's test IDs for everything (never mixed with real IDs).
 # (App ID uses "~", ad unit IDs use "/").
-admob.appId=ca-app-pub-3940256099942544~3347511713
-admob.bannerId=ca-app-pub-3940256099942544/9214589741
-admob.interstitialId=ca-app-pub-3940256099942544/1033173712
+admob.appId=ca-app-pub-XXXXXXXXXXXXXXXX~NNNNNNNNNN
+admob.bannerId=ca-app-pub-XXXXXXXXXXXXXXXX/NNNNNNNNNN
+# Leave blank to disable interstitials entirely.
+admob.interstitialId=
+# Optional comma-separated test device IDs passed to RequestConfiguration.setTestDeviceIds.
+admob.testDeviceIds=

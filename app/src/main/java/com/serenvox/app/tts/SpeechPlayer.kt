@@ -9,6 +9,8 @@ import android.media.AudioTrack
 import android.media.PlaybackParams
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,14 +18,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 
 enum class Status { IDLE, PREPARING, PLAYING, PAUSED }
 
@@ -37,60 +41,126 @@ data class PlayerState(
     val progress: Float get() = if (chunks.isEmpty()) 0f else (index.toFloat() / chunks.size)
 }
 
+/** A loaded neural voice. [generate] may block; it is never called concurrently by the player. */
+interface Synth {
+    val sampleRate: Int
+    fun generate(text: String, speed: Float): FloatArray
+}
+
+/** A PCM float output. [write] must not block: it returns how many frames were accepted (0 when full). */
+interface AudioSink {
+    fun play()
+    fun pause()
+    fun write(buf: FloatArray, off: Int, len: Int): Int
+    /** Frames actually played since creation. */
+    val headFrames: Long
+    /** Pause, flush queued audio, stop and free. Idempotent. */
+    fun release()
+}
+
+interface NeuralEngine {
+    fun isAvailable(voiceId: String): Boolean
+    fun displayName(voiceId: String): String
+    suspend fun load(voiceId: String, speaker: Int): Synth
+    fun sink(sampleRate: Int, pitch: Float): AudioSink
+}
+
+interface SystemEngine {
+    suspend fun ensure(): Boolean
+    fun configure(speed: Float, pitch: Float, onStart: (String) -> Unit, onDone: (String) -> Unit, onError: (String) -> Unit)
+    fun speak(text: String, utteranceId: String, flush: Boolean)
+    fun stop()
+}
+
 /**
- * Plays text sentence by sentence. Uses an on-device neural voice (sherpa-onnx) when one is
- * installed and selected, otherwise Android's system TextToSpeech.
- * Synthesis of the next sentence runs ahead of playback so audio stays gapless.
+ * Plays text sentence by sentence.
+ *
+ * Exactly one playback session exists at a time. Every user action (play, seek, skip, speed or
+ * voice change, pause of system TTS, stop) bumps a generation token synchronously, then a single
+ * command loop cancels and joins the previous session's producer/consumer, flushes and releases its
+ * audio output, drops queued buffers, and only then starts the new session. Every state update and
+ * engine callback carries its generation and is ignored when stale, so an old session can neither
+ * be heard nor move the highlight.
  */
-class SpeechPlayer(private val context: Context, private val voices: VoiceManager) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+class SpeechPlayer internal constructor(
+    private val neural: NeuralEngine,
+    private val system: SystemEngine?,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val synthDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val exportLoader: (suspend (String) -> com.k2fsa.sherpa.onnx.OfflineTts)? = null,
+) {
+    constructor(context: Context, voices: VoiceManager) :
+        this(AndroidNeuralEngine(voices), AndroidSystemEngine(context), exportLoader = { voices.load(it) })
+
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state
 
+    private val gen = AtomicLong()
+    private sealed class Cmd { abstract val gen: Long
+        data class Start(override val gen: Long, val chunks: List<String>, val args: Args, val from: Int) : Cmd()
+        data class Halt(override val gen: Long) : Cmd()
+    }
+    private val commands = Channel<Cmd>(Channel.UNLIMITED)
     private var job: Job? = null
+    @Volatile private var sink: AudioSink? = null
     @Volatile private var paused = false
-    private var track: AudioTrack? = null
+    @Volatile private var systemActive = false
 
-    // System TTS fallback
-    private var systemTts: TextToSpeech? = null
-    private var systemReady = false
-    private var systemParams: Triple<Float, Float, Int>? = null
-
-    private data class Args(val voiceId: String, val speed: Float, val pitch: Float, val speaker: Int)
-    private var lastArgs: Args? = null
+    data class Args(val voiceId: String, val speed: Float, val pitch: Float, val speaker: Int)
+    @Volatile private var lastArgs: Args? = null
 
     private val _sleepEndsAt = MutableStateFlow<Long?>(null)
     /** Wall-clock millis when the sleep timer pauses playback, or null when off. */
     val sleepEndsAt: StateFlow<Long?> = _sleepEndsAt
     private var sleepJob: Job? = null
 
-    fun play(text: String, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int = 0) =
-        playChunks(Chunker.split(text), voiceId, speed, pitch, speaker, from)
-
-    private fun playChunks(chunks: List<String>, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int) {
-        if (chunks.isEmpty()) return
-        lastArgs = Args(voiceId, speed, pitch, speaker)
-        val start = from.coerceIn(0, chunks.lastIndex)
+    init {
         scope.launch {
-            stopInternal()
-            paused = false
-            if (voices.isInstalled(voiceId)) playNeural(chunks, voiceId, speed, pitch, speaker, start)
-            else playSystem(chunks, speed, pitch, start)
+            for (cmd in commands) {
+                stopCurrent()
+                if (cmd.gen != gen.get()) continue // superseded already: coalesce rapid seeks
+                if (cmd is Cmd.Start) {
+                    paused = false
+                    job = scope.launch {
+                        if (neural.isAvailable(cmd.args.voiceId)) runNeural(cmd.gen, cmd.chunks, cmd.args, cmd.from)
+                        else runSystem(cmd.gen, cmd.chunks, cmd.args, cmd.from)
+                    }
+                }
+            }
         }
     }
 
-    /** Jumps [delta] sentences from the current one, keeping playing/paused state. */
+    /** Current generation, for tests. */
+    internal val generation: Long get() = gen.get()
+
+    fun play(text: String, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int = 0) =
+        start(Chunker.split(text), Args(voiceId, speed, pitch, speaker), from)
+
+    internal fun playChunks(chunks: List<String>, args: Args, from: Int = 0) = start(chunks, args, from)
+
+    private fun start(chunks: List<String>, args: Args, from: Int) {
+        if (chunks.isEmpty()) return
+        lastArgs = args
+        val start = from.coerceIn(0, chunks.lastIndex)
+        val g = gen.incrementAndGet()
+        val name = if (neural.isAvailable(args.voiceId)) neural.displayName(args.voiceId) else "System voice"
+        // Highlight moves to the requested sentence immediately and stays there.
+        _state.value = PlayerState(Status.PREPARING, chunks, start, name)
+        commands.trySend(Cmd.Start(g, chunks, args, start))
+    }
+
+    /** Jumps [delta] sentences from the current one. */
     fun skip(delta: Int) {
         val s = _state.value; val a = lastArgs ?: return
         if (s.chunks.isEmpty() || s.status == Status.IDLE) return
-        playChunks(s.chunks, a.voiceId, a.speed, a.pitch, a.speaker, s.index + delta)
+        start(s.chunks, a, s.index + delta)
     }
 
     /** Starts speaking from sentence [index] of the current text. */
     fun seekTo(index: Int) {
         val s = _state.value; val a = lastArgs ?: return
         if (s.chunks.isEmpty() || s.status == Status.IDLE) return
-        playChunks(s.chunks, a.voiceId, a.speed, a.pitch, a.speaker, index)
+        start(s.chunks, a, index)
     }
 
     /** Applies new speed/pitch immediately by restarting at the current sentence. */
@@ -98,7 +168,7 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
         val s = _state.value; val a = lastArgs ?: return
         if (s.status == Status.IDLE) return
         if (a.speed == speed && a.pitch == pitch) return
-        playChunks(s.chunks, a.voiceId, speed, pitch, a.speaker, s.index)
+        start(s.chunks, a.copy(speed = speed, pitch = pitch), s.index)
     }
 
     /** Pauses playback after [minutes]; null cancels. */
@@ -113,129 +183,124 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
         }
     }
 
-    private fun playNeural(chunks: List<String>, voiceId: String, speed: Float, pitch: Float, speaker: Int, from: Int) {
-        _state.value = PlayerState(Status.PREPARING, chunks, from, VoiceCatalog.byId(voiceId)?.name ?: voiceId)
-        job = scope.launch {
-            try {
-                val tts = voices.load(voiceId)
-                val sid = VoiceCatalog.byId(voiceId)?.speakerId ?: speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
-                val rate = tts.sampleRate()
-                val minBuf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-                val t = AudioTrack.Builder()
-                    .setAudioAttributes(AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                    .setAudioFormat(AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                        .setSampleRate(rate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                    .setBufferSizeInBytes(minBuf * 4)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
-                track = t
-                if (pitch != 1f) t.playbackParams = PlaybackParams().setPitch(pitch).setSpeed(1f)
-                t.play()
-
-                // Producer: synthesise up to 2 sentences ahead.
-                val queue = Channel<Pair<Int, FloatArray>>(capacity = 2)
-                val producer = launch(Dispatchers.Default) {
-                    for (i in from until chunks.size) {
-                        val c = chunks[i]
-                        val audio = tts.generate(text = c, sid = sid, speed = speed)
-                        queue.send(i to audio.samples)
-                    }
-                    queue.close()
-                }
-                var written = 0L
-                for ((i, samples) in queue) {
-                    _state.update { it.copy(status = if (paused) Status.PAUSED else Status.PLAYING, index = i) }
-                    var off = 0
-                    while (off < samples.size) {
-                        if (!isActive) return@launch
-                        if (paused) { delay(50); continue }
-                        val n = minOf(2048, samples.size - off)
-                        val w = t.write(samples, off, n, AudioTrack.WRITE_BLOCKING)
-                        if (w <= 0) break
-                        off += w; written += w
-                    }
-                    // short natural pause between sentences
-                    val gap = FloatArray(rate / 8); t.write(gap, 0, gap.size, AudioTrack.WRITE_BLOCKING); written += gap.size
-                }
-                producer.join()
-                // Let the buffer drain.
-                while (isActive && t.playbackHeadPosition < written) delay(50)
-                finish()
-            } catch (e: Exception) {
-                if (isActive) _state.update { it.copy(status = Status.IDLE, error = e.message) }
-                releaseTrack()
-            }
-        }
-    }
-
-    private suspend fun playSystem(chunks: List<String>, speed: Float, pitch: Float, from: Int) {
-        _state.value = PlayerState(Status.PREPARING, chunks, from, "System voice")
-        systemParams = Triple(speed, pitch, from)
-        val tts = ensureSystemTts() ?: run {
-            _state.update { it.copy(status = Status.IDLE, error = "No system text-to-speech engine available") }
-            return
-        }
-        tts.setSpeechRate(speed); tts.setPitch(pitch)
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(id: String) { _state.update { it.copy(status = Status.PLAYING, index = id.toInt()) } }
-            override fun onDone(id: String) { if (id.toInt() == chunks.lastIndex) finish() }
-            @Deprecated("Deprecated in Java") override fun onError(id: String) { _state.update { it.copy(status = Status.IDLE, error = "Speech error") } }
-        })
-        for (i in from until chunks.size) {
-            tts.speak(chunks[i], if (i == from) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, i.toString())
-        }
-    }
-
-    private suspend fun ensureSystemTts(): TextToSpeech? {
-        systemTts?.let { if (systemReady) return it }
-        val done = Channel<Boolean>(1)
-        withContext(Dispatchers.Main) {
-            systemTts = TextToSpeech(context) { status -> done.trySend(status == TextToSpeech.SUCCESS) }
-        }
-        systemReady = done.receive()
-        if (systemReady) systemTts?.language = Locale.getDefault()
-        return if (systemReady) systemTts else null
-    }
-
     fun pause() {
         val s = _state.value
         if (s.status != Status.PLAYING && s.status != Status.PREPARING) return
+        if (systemActive) {
+            // System TTS cannot pause: end this session; resume re-speaks from the current sentence.
+            val g = gen.incrementAndGet()
+            _state.value = s.copy(status = Status.PAUSED)
+            commands.trySend(Cmd.Halt(g))
+            return
+        }
         paused = true
-        if (track != null) track?.pause() else systemTts?.stop()
+        sink?.pause()
         _state.update { it.copy(status = Status.PAUSED) }
     }
 
     fun resume() {
         val s = _state.value
         if (s.status != Status.PAUSED) return
+        val a = lastArgs ?: return
+        val k = sink
+        if (k != null && !systemActive && job?.isActive == true) {
+            paused = false; k.play()
+            _state.update { it.copy(status = Status.PLAYING) }
+        } else start(s.chunks, a, s.index)
+    }
+
+    fun stop() {
+        val g = gen.incrementAndGet()
+        _state.value = PlayerState()
+        commands.trySend(Cmd.Halt(g))
+    }
+
+    /** Runs on the command loop only. */
+    private suspend fun stopCurrent() {
         paused = false
-        val t = track
-        if (t != null) { t.play(); _state.update { it.copy(status = Status.PLAYING) } }
-        else {
-            val (speed, pitch, _) = systemParams ?: return
-            scope.launch { playSystem(s.chunks, speed, pitch, s.index) }
+        sink?.let { runCatching { it.pause() } }
+        if (systemActive) runCatching { system?.stop() }
+        job?.cancelAndJoin(); job = null
+        sink?.release(); sink = null
+        systemActive = false
+    }
+
+    private inline fun upd(g: Long, crossinline f: (PlayerState) -> PlayerState) =
+        _state.update { if (gen.get() == g) f(it) else it }
+
+    private suspend fun runNeural(g: Long, chunks: List<String>, a: Args, from: Int) = withContext(Dispatchers.Default) {
+        var out: AudioSink? = null
+        try {
+            val synth = neural.load(a.voiceId, a.speaker)
+            coroutineContext.ensureActive()
+            val rate = synth.sampleRate
+            val t = neural.sink(rate, a.pitch); out = t; sink = t
+            if (!paused) t.play()
+            val queue = Channel<Pair<Int, FloatArray>>(capacity = 2)
+            val producer = launch(synthDispatcher) {
+                for (i in from until chunks.size) {
+                    ensureActive()
+                    val samples = synth.generate(chunks[i], a.speed)
+                    ensureActive()
+                    queue.send(i to samples)
+                }
+                queue.close()
+            }
+            // Sentence start positions, in frames; the highlight follows what is actually audible.
+            val marks = ArrayList<Pair<Long, Int>>()
+            var written = 0L
+            val monitor = launch {
+                while (true) {
+                    val head = t.headFrames
+                    val idx = synchronized(marks) { marks.lastOrNull { it.first <= head }?.second }
+                    if (idx != null) upd(g) { it.copy(index = idx, status = if (paused) Status.PAUSED else Status.PLAYING) }
+                    delay(25)
+                }
+            }
+            suspend fun writeAll(buf: FloatArray) {
+                var off = 0
+                while (off < buf.size) {
+                    coroutineContext.ensureActive()
+                    if (paused) { delay(20); continue }
+                    val w = t.write(buf, off, minOf(4096, buf.size - off))
+                    if (w < 0) throw IllegalStateException("Audio output error $w")
+                    if (w == 0) delay(5) else { off += w; written += w }
+                }
+            }
+            val gap = FloatArray(rate / 8)
+            for ((i, samples) in queue) {
+                synchronized(marks) { marks.add(written to i) }
+                writeAll(samples)
+                writeAll(gap)
+            }
+            producer.join()
+            while (t.headFrames < written) { coroutineContext.ensureActive(); delay(20) }
+            monitor.cancel()
+            upd(g) { it.copy(status = Status.IDLE, index = it.chunks.size) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            runCatching { Log.w("SpeechPlayer", "playback failed", e) }
+            upd(g) { it.copy(status = Status.IDLE, error = e.message) }
+        } finally {
+            out?.release()
         }
     }
 
-    fun stop() { scope.launch { stopInternal(); _state.value = PlayerState() } }
-
-    private suspend fun stopInternal() {
-        paused = false
-        track?.let { runCatching { it.pause(); it.flush() } }
-        job?.cancelAndJoin(); job = null
-        releaseTrack()
-        systemTts?.stop()
-    }
-
-    private fun releaseTrack() { track?.let { runCatching { it.stop() }; it.release() }; track = null }
-
-    private fun finish() {
-        releaseTrack()
-        _state.update { it.copy(status = Status.IDLE, index = it.chunks.size) }
+    private suspend fun runSystem(g: Long, chunks: List<String>, a: Args, from: Int) {
+        val tts = system
+        if (tts == null || !tts.ensure()) {
+            upd(g) { it.copy(status = Status.IDLE, error = "No system text-to-speech engine available") }
+            return
+        }
+        coroutineContext.ensureActive()
+        systemActive = true
+        tts.configure(a.speed, a.pitch,
+            onStart = { id -> UtteranceId.parse(id)?.let { (ug, i) -> if (ug == g) upd(g) { it.copy(status = Status.PLAYING, index = i) } } },
+            onDone = { id -> UtteranceId.parse(id)?.let { (ug, i) -> if (ug == g && i == chunks.lastIndex) upd(g) { it.copy(status = Status.IDLE, index = it.chunks.size) } } },
+            onError = { id -> UtteranceId.parse(id)?.let { (ug, _) -> if (ug == g) upd(g) { it.copy(status = Status.IDLE, error = "Speech error") } } },
+        )
+        for (i in from until chunks.size) tts.speak(chunks[i], UtteranceId.of(g, i), flush = i == from)
     }
 
     /** Renders text to a WAV file with the neural voice. Calls [onProgress] with 0..1. */
@@ -243,7 +308,7 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
         withContext(Dispatchers.Default) {
             val chunks = Chunker.split(text)
             require(chunks.isNotEmpty()) { "Nothing to export" }
-            val tts = voices.load(voiceId)
+            val tts = requireNotNull(exportLoader) { "Export unavailable" }(voiceId)
             val sid = VoiceCatalog.byId(voiceId)?.speakerId ?: speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
             WavWriter(out, tts.sampleRate()).use { w ->
                 chunks.forEachIndexed { i, c ->
@@ -253,4 +318,82 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
                 }
             }
         }
+}
+
+/** System TTS utterance IDs carry the session generation so stale callbacks can be dropped. */
+internal object UtteranceId {
+    fun of(gen: Long, index: Int) = "$gen:$index"
+    fun parse(id: String): Pair<Long, Int>? {
+        val p = id.split(':'); if (p.size != 2) return null
+        val g = p[0].toLongOrNull() ?: return null; val i = p[1].toIntOrNull() ?: return null
+        return g to i
+    }
+}
+
+private class AndroidNeuralEngine(private val voices: VoiceManager) : NeuralEngine {
+    override fun isAvailable(voiceId: String) = voices.isInstalled(voiceId)
+    override fun displayName(voiceId: String) = VoiceCatalog.byId(voiceId)?.name ?: voiceId
+    override suspend fun load(voiceId: String, speaker: Int): Synth {
+        val tts = voices.load(voiceId)
+        val sid = VoiceCatalog.byId(voiceId)?.speakerId ?: speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
+        return object : Synth {
+            override val sampleRate = tts.sampleRate()
+            override fun generate(text: String, speed: Float) = tts.generate(text = text, sid = sid, speed = speed).samples
+        }
+    }
+    override fun sink(sampleRate: Int, pitch: Float): AudioSink {
+        val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+        val t = AudioTrack.Builder()
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioFormat(AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                .setSampleRate(sampleRate)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+            .setBufferSizeInBytes(minBuf * 4)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        if (pitch != 1f) t.playbackParams = PlaybackParams().setPitch(pitch).setSpeed(1f)
+        return object : AudioSink {
+            @Volatile var released = false
+            override fun play() { if (!released) t.play() }
+            override fun pause() { if (!released) runCatching { t.pause() } }
+            override fun write(buf: FloatArray, off: Int, len: Int) =
+                if (released) -1 else t.write(buf, off, len, AudioTrack.WRITE_NON_BLOCKING)
+            override val headFrames: Long get() = if (released) 0 else t.playbackHeadPosition.toLong() and 0xffffffffL
+            @Synchronized override fun release() {
+                if (released) return
+                released = true
+                runCatching { t.pause(); t.flush(); t.stop() }
+                t.release()
+            }
+        }
+    }
+}
+
+private class AndroidSystemEngine(private val context: Context) : SystemEngine {
+    private var tts: TextToSpeech? = null
+    private var ready = false
+    override suspend fun ensure(): Boolean {
+        if (tts != null && ready) return true
+        val done = Channel<Boolean>(1)
+        withContext(Dispatchers.Main) { tts = TextToSpeech(context) { s -> done.trySend(s == TextToSpeech.SUCCESS) } }
+        ready = done.receive()
+        if (ready) tts?.language = Locale.getDefault()
+        return ready
+    }
+    override fun configure(speed: Float, pitch: Float, onStart: (String) -> Unit, onDone: (String) -> Unit, onError: (String) -> Unit) {
+        val t = tts ?: return
+        t.setSpeechRate(speed); t.setPitch(pitch)
+        t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(id: String) = onStart(id)
+            override fun onDone(id: String) = onDone(id)
+            @Deprecated("Deprecated in Java") override fun onError(id: String) = onError(id)
+        })
+    }
+    override fun speak(text: String, utteranceId: String, flush: Boolean) {
+        tts?.speak(text, if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, utteranceId)
+    }
+    override fun stop() { tts?.stop() }
 }

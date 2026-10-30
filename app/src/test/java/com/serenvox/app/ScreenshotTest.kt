@@ -71,7 +71,7 @@ class ScreenshotTest {
     }
     @Composable private fun voicesScreen() = VoicesScreen(VoiceCatalog.voices, states, "kokoro-heart", 20, {}, {}, {}, {}, {}, previewing = "kokoro-emma", engineInstalled = true)
     @Composable private fun library() = LibraryScreen(lib, {}, {}, {})
-    @Composable private fun settings() = SettingsScreen(com.serenvox.app.ThemeMode.SYSTEM, false, true, false, "US$2.99", true, "1.2.2",
+    @Composable private fun settings() = SettingsScreen(com.serenvox.app.ThemeMode.SYSTEM, false, true, false, "US$2.99", true, "1.2.3",
         {}, {}, {}, {}, {}, {}, {}, {})
     @Composable private fun onboarding() = OnboardingScreen(VoiceCatalog.voices, emptyMap(), "kokoro-heart", {}, {}, {}, previewing = "kokoro-michael")
     @Composable private fun speedSheet() = Column { Box(Modifier.weight(1f)) {}; SpeedSheetContent(1.25f, 1f, {}, {}); SleepSheetContent(true) {} }

@@ -42,7 +42,7 @@ class ScreenshotTest {
     private val voices = listOf(VoiceOption("system", "System"), VoiceOption("en_US-ljspeech-medium", "Linda"),
         VoiceOption("en_GB-cori-medium", "Cori"), VoiceOption("en_US-norman-medium", "Norman"))
     private val playing = PlayerState(Status.PLAYING, chunks, 2, "Linda (US)")
-    private val states = mapOf("en_US-ljspeech-medium" to VoiceState.Installed, "en_GB-cori-medium" to VoiceState.Installed,
+    private val states = VoiceCatalog.natural.associate { it.id to (VoiceState.Installed as VoiceState) } + mapOf("en_US-ljspeech-medium" to VoiceState.Installed, "en_GB-cori-medium" to VoiceState.Installed,
         "en_US-norman-medium" to VoiceState.Downloading(0.42f))
     private val now = 1_793_000_000_000L
     private val lib = listOf(
@@ -69,11 +69,11 @@ class ScreenshotTest {
         Box(Modifier.weight(1f)) { ReadScreen("", "", PlayerState(), voices, "system", false, null, false, {}, {}, {}, {}, {}, {}, {}) }
         PlayerBar(PlayerState(), 1f, null, false, {}, {}, {}, {}, {}, {})
     }
-    @Composable private fun voicesScreen() = VoicesScreen(VoiceCatalog.voices, states, "en_US-ljspeech-medium", 20, {}, {}, {}, {}, {}, previewing = "en_US-libritts-high_20")
+    @Composable private fun voicesScreen() = VoicesScreen(VoiceCatalog.voices, states, "kokoro-heart", 20, {}, {}, {}, {}, {}, previewing = "kokoro-emma")
     @Composable private fun library() = LibraryScreen(lib, {}, {}, {})
-    @Composable private fun settings() = SettingsScreen(com.serenvox.app.ThemeMode.SYSTEM, false, true, false, "US$2.99", true, "1.1.1",
+    @Composable private fun settings() = SettingsScreen(com.serenvox.app.ThemeMode.SYSTEM, false, true, false, "US$2.99", true, "1.2.0",
         {}, {}, {}, {}, {}, {}, {}, {})
-    @Composable private fun onboarding() = OnboardingScreen(VoiceCatalog.voices, emptyMap(), "en_US-ljspeech-medium", {}, {}, {}, previewing = "en_US-kristin-medium")
+    @Composable private fun onboarding() = OnboardingScreen(VoiceCatalog.voices, emptyMap(), "kokoro-heart", {}, {}, {}, previewing = "kokoro-michael")
     @Composable private fun speedSheet() = Column { Box(Modifier.weight(1f)) {}; SpeedSheetContent(1.25f, 1f, {}, {}); SleepSheetContent(true) {} }
 
     @Test fun read_light() = shot("1_read_player", false) { readPlaying() }

@@ -49,13 +49,14 @@ components such as eSpeak NG.
 ## Voice credits (downloaded at runtime, not in this repo)
 | Voice | Source data | Licence |
 |---|---|---|
+| **Natural:** Kokoro-82M v1.0 (`kokoro-multi-lang-v1_0`, speakers af_heart, af_bella, am_michael, am_fenrir, bf_emma, bm_george) by hexgrad, StyleTTS 2 architecture (Li et al.) | Per the model card: public-domain audio, Apache/MIT-licensed audio, synthetic audio from closed commercial TTS, SIWIS (CC BY 4.0), Koniwa (CC BY 3.0); base model StyleTTS2-LJSpeech (public domain) | **Apache-2.0** weights — https://huggingface.co/hexgrad/Kokoro-82M |
 | en_US-ljspeech-medium | LJ Speech (Keith Ito), LibriVox | Public domain |
 | en_US-libritts-high | **LibriTTS** corpus — Heiga Zen, Viet Dang, Rob Clark, Yu Zhang, Ron J. Weiss, Ye Jia, Zhifeng Chen, Yonghui Wu (2019), derived from LibriVox | **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/) |
 | en_US-kristin-medium | LibriVox | Public domain |
 | en_US-norman-medium | LibriVox | Public domain |
 | en_GB-cori-medium | LibriVox | Public domain |
 
-Voices are Piper VITS models (trained by Michael Hansen / rhasspy) converted by the sherpa-onnx project.
+See `store/voice-licences.md` for the licence review. Compact voices are Piper VITS models (trained by Michael Hansen / rhasspy) converted by the sherpa-onnx project.
 Voices trained on the lessac (research-only) or non-commercial datasets are deliberately excluded.
 
 ### Additional third-party components (1.1.0)

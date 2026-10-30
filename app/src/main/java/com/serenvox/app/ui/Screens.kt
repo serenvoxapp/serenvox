@@ -288,7 +288,12 @@ fun VoicesScreen(
                 selected == "system", { }, { onUse("system") }, { onSample("system") }, null, null, false, {})
         }
         items(voices, key = { it.id }) { v ->
-            VoiceCard(v.id, v.name, "${v.description} · ${v.locale}", "${v.licence} · ${v.sizeMb} MB",
+            val idx = voices.indexOf(v)
+            if (idx == 0 || voices[idx - 1].engine != v.engine) SectionHeader(
+                if (v.isKokoro) "Natural · recommended" else "Compact · smaller and faster",
+                if (v.isKokoro) "One ${v.sizeMb} MB download includes every natural voice" else "Lighter voices for older phones or less storage")
+            VoiceCard(v.id, v.name, "${v.description} · ${v.locale}",
+                if (v.isKokoro) "${v.licence} · ${v.sizeMb} MB pack, shared" else "${v.licence} · ${v.sizeMb} MB",
                 states[v.id] ?: VoiceState.NotInstalled, selected == v.id,
                 { onDownload(v) }, { onUse(v.id) }, { onSample(v.id) }, { onDelete(v) },
                 VoiceCatalog.sampleKey(v.id, speaker), previewing == VoiceCatalog.sampleKey(v.id, speaker), onPreview)
@@ -313,6 +318,14 @@ fun VoicesScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, subtitle: String) {
+    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp, bottom = 4.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -488,7 +501,12 @@ fun OnboardingScreen(
         Text("Pick your first voice", style = MaterialTheme.typography.titleMedium)
         Text("Tap ▶ to hear a voice before you download it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
-        voices.filter { it.sizeMb < 100 }.forEach { v ->
+        val shown = VoiceCatalog.onboarding.mapNotNull { id -> voices.firstOrNull { it.id == id } }
+        shown.forEachIndexed { i, v ->
+            if (i == 0 || shown[i - 1].engine != v.engine) Text(
+                if (v.isKokoro) "Natural · ${v.sizeMb} MB, includes all natural voices" else "Compact · smaller and faster",
+                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
             val sel = v.id == chosen
             Row(Modifier.fillMaxWidth().padding(vertical = 5.dp).clip(RoundedCornerShape(20.dp))
                 .background(if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
@@ -497,7 +515,7 @@ fun OnboardingScreen(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(v.name, style = MaterialTheme.typography.titleSmall)
-                    Text("${v.description} · ${v.sizeMb} MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (v.isKokoro) v.description else "${v.description} · ${v.sizeMb} MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 VoiceCatalog.sampleKey(v.id)?.let { k -> PreviewButton(previewing == k) { onPreview(k) } }
                 RadioButton(sel, { onChoose(v.id) })

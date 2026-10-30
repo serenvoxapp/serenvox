@@ -5,6 +5,7 @@ package com.serenvox.app.tts
 import android.content.Context
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +44,12 @@ class VoiceManager(private val context: Context) {
         if (marker(v).exists()) VoiceState.Installed else VoiceState.NotInstalled
 
     fun isInstalled(id: String) = VoiceCatalog.byId(id)?.let { marker(it).exists() } == true
-    private fun set(id: String, s: VoiceState) { _states.value = _states.value + (id to s) }
+    /** Voices sharing a model pack (all Kokoro speakers) share one install state. */
+    private fun set(id: String, s: VoiceState) {
+        val pack = VoiceCatalog.byId(id)?.archiveName
+        val ids = VoiceCatalog.voices.filter { it.archiveName == pack }.map { it.id }.ifEmpty { listOf(id) }
+        _states.value = _states.value + ids.associateWith { s }
+    }
 
     suspend fun download(v: VoiceInfo) = withContext(Dispatchers.IO) {
         val tmp = File(context.cacheDir, "${v.archiveName}.tar.bz2")
@@ -98,7 +104,7 @@ class VoiceManager(private val context: Context) {
 
     @Synchronized
     fun delete(v: VoiceInfo) {
-        if (loadedId == v.id) { loaded?.release(); loaded = null; loadedId = null }
+        if (loadedId == v.id || loadedId?.startsWith(v.archiveName + "|") == true) { loaded?.release(); loaded = null; loadedId = null }
         dir(v).deleteRecursively()
         set(v.id, VoiceState.NotInstalled)
     }
@@ -106,26 +112,36 @@ class VoiceManager(private val context: Context) {
     /** Returns a ready engine for the voice (cached; only one model kept in memory). */
     @Synchronized
     fun load(id: String): OfflineTts {
-        if (loadedId == id) loaded?.let { return it }
-        loaded?.release(); loaded = null; loadedId = null
         val v = requireNotNull(VoiceCatalog.byId(id)) { "Unknown voice" }
+        // Kokoro speakers share one model; only the accent's lexicon differs.
+        val key = if (v.isKokoro) "${v.archiveName}|${v.locale}" else v.id
+        if (loadedId == key) loaded?.let { return it }
+        loaded?.release(); loaded = null; loadedId = null
         val d = dir(v)
-        val model = d.listFiles()!!.first { it.name.endsWith(".onnx") }
-        val cfg = OfflineTtsConfig(
-            model = OfflineTtsModelConfig(
+        val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+        val model = if (v.isKokoro) OfflineTtsModelConfig(
+                kokoro = OfflineTtsKokoroModelConfig(
+                    model = File(d, "model.onnx").absolutePath,
+                    voices = File(d, "voices.bin").absolutePath,
+                    tokens = File(d, "tokens.txt").absolutePath,
+                    dataDir = File(d, "espeak-ng-data").absolutePath,
+                    lexicon = File(d, if (v.locale == "en-GB") "lexicon-gb-en.txt" else "lexicon-us-en.txt").absolutePath,
+                    lang = if (v.locale == "en-GB") "en" else "en-us",
+                ),
+                numThreads = threads, debug = false, provider = "cpu",
+            ) else OfflineTtsModelConfig(
                 vits = OfflineTtsVitsModelConfig(
-                    model = model.absolutePath,
+                    model = d.listFiles()!!.first { it.name.endsWith(".onnx") }.absolutePath,
                     tokens = File(d, "tokens.txt").absolutePath,
                     dataDir = File(d, "espeak-ng-data").absolutePath,
                 ),
                 numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
                 debug = false,
                 provider = "cpu",
-            ),
-            maxNumSentences = 1,
-        )
+            )
+        val cfg = OfflineTtsConfig(model = model, maxNumSentences = 1)
         val tts = OfflineTts(assetManager = null, config = cfg)
-        loaded = tts; loadedId = id
+        loaded = tts; loadedId = key
         return tts
     }
 }

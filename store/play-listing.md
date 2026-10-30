@@ -5,13 +5,15 @@
 **Website:** https://serenvox.com/ · **Privacy policy:** https://serenvox.com/privacy/ · **Support:** https://serenvox.com/support/
 
 ## Short description (80 max)
-Natural AI voices read PDFs, Word, EPUB & text aloud. Offline, private, open source.
+Lifelike AI voices read PDFs, Word, EPUB & text aloud. Offline and open source.
 
 ## Full description
 Serenvox turns documents and text into smooth, natural speech using AI voices that run right on your phone.
 
 🎙️ NATURAL AI VOICES, OFFLINE
-Download free neural voices once (US and UK English, plus a pack with hundreds of voices) and listen anywhere, even in airplane mode. Your text is never uploaded.
+Download free neural voices once and listen anywhere, even in airplane mode. Your text is never uploaded.
+• Natural voices (new): six lifelike US and UK English voices — Heart, Bella, Michael, Fenrir, Emma and George — in one download
+• Compact voices: smaller, faster voices for older phones, including a pack with hundreds of speakers
 
 ▶️ PREVIEW BEFORE YOU DOWNLOAD
 Tap play on any voice to hear a sample before you download it, including featured voices from the multi-speaker pack.

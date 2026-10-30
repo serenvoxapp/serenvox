@@ -14,14 +14,19 @@ object Licences {
         appendLine()
         appendLine("VOICE MODELS (downloaded on demand)")
         appendLine()
-        VoiceCatalog.voices.forEach {
+        appendLine("• Natural voices (${VoiceCatalog.natural.joinToString { it.name }}) — Kokoro-82M v1.0")
+        appendLine("  Licence: Apache License 2.0 (model weights)")
+        appendLine("  ${VoiceCatalog.natural.first().attribution}")
+        appendLine("  Model card: https://huggingface.co/hexgrad/Kokoro-82M · Training data includes SIWIS (CC BY 4.0) and Koniwa (CC BY 3.0) audio.")
+        appendLine()
+        VoiceCatalog.compact.forEach {
             appendLine("• ${it.name} — ${it.id}")
             appendLine("  Licence: ${it.licence}")
             appendLine("  ${it.attribution}")
             appendLine()
         }
         appendLine("CC BY 4.0: https://creativecommons.org/licenses/by/4.0/")
-        appendLine("Voices trained with Piper (https://github.com/rhasspy/piper, MIT) and packaged by the sherpa-onnx project.")
+        appendLine("Compact voices trained with Piper (https://github.com/rhasspy/piper, MIT) and packaged by the sherpa-onnx project.")
         appendLine()
         appendLine("SOFTWARE")
         appendLine()

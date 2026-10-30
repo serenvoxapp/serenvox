@@ -118,7 +118,7 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
         job = scope.launch {
             try {
                 val tts = voices.load(voiceId)
-                val sid = speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
+                val sid = VoiceCatalog.byId(voiceId)?.speakerId ?: speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
                 val rate = tts.sampleRate()
                 val minBuf = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
                 val t = AudioTrack.Builder()
@@ -244,7 +244,7 @@ class SpeechPlayer(private val context: Context, private val voices: VoiceManage
             val chunks = Chunker.split(text)
             require(chunks.isNotEmpty()) { "Nothing to export" }
             val tts = voices.load(voiceId)
-            val sid = speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
+            val sid = VoiceCatalog.byId(voiceId)?.speakerId ?: speaker.coerceIn(0, (tts.numSpeakers() - 1).coerceAtLeast(0))
             WavWriter(out, tts.sampleRate()).use { w ->
                 chunks.forEachIndexed { i, c ->
                     w.write(tts.generate(text = c, sid = sid, speed = speed).samples)

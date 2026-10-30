@@ -37,7 +37,7 @@ const val KOKORO_PACK = "kokoro-engine-v1_0-fp16"
  * Single place for the voice-pack host. Every file below must be uploaded here unchanged
  * (see dist/voice-packs/SHA256SUMS); the app rejects any file whose SHA-256 differs.
  */
-const val VOICE_PACK_BASE_URL = "https://serenvox.com/voice-packs/v1/"
+const val VOICE_PACK_BASE_URL = "https://github.com/serenvoxapp/serenvox/releases/download/voice-packs-v1/"
 
 object KokoroPack {
     const val ENGINE_FILE = "$KOKORO_PACK.tar.bz2"

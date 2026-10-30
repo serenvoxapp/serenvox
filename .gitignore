@@ -11,3 +11,4 @@ ads.properties
 keystore.properties
 .kotlin/
 dist/
+/user-test.pdf

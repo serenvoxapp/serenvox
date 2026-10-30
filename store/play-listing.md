@@ -43,7 +43,7 @@ Export speech to an audio file and share it.
 Speech and text recognition happen on your device. No account, no sign-up.
 
 💚 OPEN SOURCE
-Serenvox is free software under the GPL-3.0 licence. The full source code is public: [SOURCE_URL]
+Serenvox is free software under the GPL-3.0 licence. The full source code is public: https://github.com/serenvoxapp/serenvox
 
 Serenvox is free with ads. A one-time purchase removes all ads forever.
 

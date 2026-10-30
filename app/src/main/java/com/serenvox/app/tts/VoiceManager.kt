@@ -18,9 +18,6 @@ import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.RandomAccessFile
-import java.security.MessageDigest
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.coroutines.coroutineContext
 
 sealed interface VoiceState {
@@ -57,28 +54,18 @@ class VoiceManager(private val context: Context) {
     private fun set(id: String, s: VoiceState) { _states.value = _states.value + (id to s) }
 
     /** Downloads [url] to [dest] reporting progress in [from]..[to]; verifies SHA-256 when given. */
+    private val downloader = Downloader()
+
     private suspend fun fetch(url: String, dest: File, sha256: String?, id: String, from: Float, to: Float) {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true; connectTimeout = 20_000; readTimeout = 30_000
-        }
-        check(conn.responseCode in 200..299) { "Download failed (HTTP ${conn.responseCode})" }
-        val total = conn.contentLengthLong
-        val md = MessageDigest.getInstance("SHA-256")
-        conn.inputStream.use { input ->
-            dest.outputStream().use { out ->
-                val buf = ByteArray(64 * 1024); var done = 0L; var lastPct = -1
-                while (true) {
-                    coroutineContext.ensureActive()
-                    val n = input.read(buf); if (n < 0) break
-                    out.write(buf, 0, n); md.update(buf, 0, n); done += n
-                    if (total > 0) {
-                        val pct = (done * 100 / total).toInt()
-                        if (pct != lastPct) { lastPct = pct; set(id, VoiceState.Downloading(from + (to - from) * pct / 100f)) }
-                    }
-                }
+        val ctx = coroutineContext
+        var lastPct = -1
+        downloader.download(url, dest, sha256) { done, total ->
+            ctx.ensureActive()
+            if (total > 0) {
+                val pct = (done * 100 / total).toInt()
+                if (pct != lastPct) { lastPct = pct; set(id, VoiceState.Downloading(from + (to - from) * pct / 100f)) }
             }
         }
-        if (sha256 != null) check(md.digest().toHex() == sha256) { "Download corrupted (checksum mismatch)" }
     }
 
     suspend fun download(v: VoiceInfo) = withContext(Dispatchers.IO) {

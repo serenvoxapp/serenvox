@@ -29,8 +29,8 @@ android {
         applicationId = "com.serenvox.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2.1"
+        versionCode = 6
+        versionName = "1.2.2"
         manifestPlaceholders["admobAppId"] = adsProps.getProperty("admob.appId")
         buildConfigField("String", "BANNER_ID", "\"${adsProps.getProperty("admob.bannerId")}\"")
         buildConfigField("String", "INTERSTITIAL_ID", "\"${adsProps.getProperty("admob.interstitialId")}\"")
@@ -81,6 +81,7 @@ android {
             it.systemProperty("roborazzi.test.record", "true")
             it.systemProperty("screenshots.dir", rootProject.file("screenshots").absolutePath)
             it.maxHeapSize = "1536m"
+            System.getenv("SERENVOX_NET_TESTS")?.let { v -> it.environment("SERENVOX_NET_TESTS", v) }
         }
     } }
     packaging { jniLibs { useLegacyPackaging = false } }

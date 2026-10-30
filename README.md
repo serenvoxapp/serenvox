@@ -9,6 +9,8 @@ voice manager (download/preview/delete), sentence highlighting, long-text chunki
 with media notification, WAV export & share, dark mode / Material You. Falls back to Android's system TTS.
 Free with ads (AdMob banner + rare capped interstitial, UMP consent); one-time `remove_ads` purchase.
 
+Source: https://github.com/serenvoxapp/serenvox · Website: https://serenvox.com
+
 ## Build
 Requirements: JDK 17, Android SDK (platform 36, build-tools 36).
 ```sh
@@ -55,6 +57,8 @@ components such as eSpeak NG.
 | en_US-kristin-medium | LibriVox | Public domain |
 | en_US-norman-medium | LibriVox | Public domain |
 | en_GB-cori-medium | LibriVox | Public domain |
+
+Natural voice files (fp16-weight Kokoro engine + per-voice style files, with `SHA256SUMS`) are hosted on the [`voice-packs-v1`](https://github.com/serenvoxapp/serenvox/releases/tag/voice-packs-v1) release; the URL is `VOICE_PACK_BASE_URL` in `tts/VoiceCatalog.kt`.
 
 See `store/voice-licences.md` for the licence review. Compact voices are Piper VITS models (trained by Michael Hansen / rhasspy) converted by the sherpa-onnx project.
 Voices trained on the lessac (research-only) or non-commercial datasets are deliberately excluded.

@@ -294,4 +294,4 @@ const val TERMS_URL = "https://serenvox.com/terms/"
 const val SUPPORT_URL = "https://serenvox.com/support/"
 const val WEBSITE_URL = "https://serenvox.com/"
 // TODO: replace with the public source repository URL (required for GPL-3 compliance).
-const val SOURCE_URL = "https://github.com/OWNER/serenvox"
+const val SOURCE_URL = "https://github.com/serenvoxapp/serenvox"

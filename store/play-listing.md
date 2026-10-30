@@ -4,7 +4,7 @@
 **Category:** Tools (alt: Productivity) · **Contains ads:** Yes · **In-app purchases:** Yes
 
 ## Short description (80 max)
-Natural AI voices that read any text aloud — offline, private, and free.
+Natural AI voices read any text aloud. Offline, private and open source.
 
 ## Full description
 Serenvox turns any text into smooth, natural speech using AI voices that run right on your phone.
@@ -31,6 +31,9 @@ Export speech to a WAV audio file and share it.
 
 🔒 PRIVATE BY DESIGN
 Speech is generated on your device. No account, no sign-up.
+
+💚 OPEN SOURCE
+Serenvox is free software under the GPL-3.0 licence. The full source code is public: [SOURCE_URL]
 
 Serenvox is free with ads. A one-time purchase removes all ads forever.
 

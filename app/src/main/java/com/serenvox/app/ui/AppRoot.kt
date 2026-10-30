@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright 2026 Ryan Lu
 package com.serenvox.app.ui
 
 import android.content.Intent
@@ -286,13 +288,18 @@ private fun SettingsScreen(activity: MainActivity, app: SerenvoxApp, openLicence
             OutlinedButton(onClick = { activity.ads.showPrivacyOptions() }) { Text("Privacy / ad consent options") }
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
-        TextButton(onClick = openLicences) { Text("Open-source licences & voice credits") }
+        TextButton(onClick = openLicences) { Text("About, licences & voice credits") }
         TextButton(onClick = {
             activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(PRIVACY_URL)))
         }) { Text("Privacy policy") }
+        TextButton(onClick = {
+            activity.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(SOURCE_URL)))
+        }) { Text("Source code (GPL-3.0)") }
         Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 // TODO: replace with the URL where store/privacy-policy.html is hosted.
 const val PRIVACY_URL = "https://example.com/serenvox/privacy"
+// TODO: replace with the public source repository URL (required for GPL-3 compliance).
+const val SOURCE_URL = "https://github.com/OWNER/serenvox"

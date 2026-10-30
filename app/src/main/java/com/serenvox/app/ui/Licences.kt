@@ -1,9 +1,17 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright 2026 Ryan Lu
 package com.serenvox.app.ui
 
 import com.serenvox.app.tts.VoiceCatalog
 
 object Licences {
     val text: String get() = buildString {
+        appendLine("ABOUT SERENVOX")
+        appendLine()
+        appendLine("Serenvox is free and open-source software: Copyright 2026 Ryan Lu, licensed under the GNU General Public License v3.0 or later, with an additional permission (GPL section 7) for linking with Google Play services, AdMob, UMP and Play Billing libraries.")
+        appendLine("Complete source code: $SOURCE_URL")
+        appendLine("This program comes with ABSOLUTELY NO WARRANTY. See https://www.gnu.org/licenses/gpl-3.0.html")
+        appendLine()
         appendLine("VOICE MODELS (downloaded on demand)")
         appendLine()
         VoiceCatalog.voices.forEach {
@@ -20,7 +28,7 @@ object Licences {
         appendLine("• sherpa-onnx — Apache License 2.0 — https://github.com/k2-fsa/sherpa-onnx")
         appendLine("• ONNX Runtime — MIT License — https://github.com/microsoft/onnxruntime")
         appendLine("• eSpeak NG (phonemizer, linked inside the sherpa-onnx native library) — GNU GPL v3 or later — https://github.com/espeak-ng/espeak-ng")
-        appendLine("  Source code for eSpeak NG and sherpa-onnx is available at the URLs above. On request we will provide the corresponding source for the exact versions used in this app for at least three years. Contact the developer via the Play Store listing.")
+        appendLine("  The complete corresponding source of this app, including build files and the exact third-party versions used, is at $SOURCE_URL")
         appendLine("• piper-phonemize — MIT License")
         appendLine("• Apache Commons Compress — Apache License 2.0")
         appendLine("• AndroidX, Jetpack Compose, Kotlin, kotlinx.coroutines — Apache License 2.0")

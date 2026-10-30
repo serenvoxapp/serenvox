@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright 2026 Ryan Lu
 import java.util.Properties
 
 plugins {
@@ -10,8 +12,13 @@ val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+// Real AdMob IDs live in git-ignored ads.properties; otherwise fall back to Google's test IDs.
 val adsProps = Properties().apply {
-    rootProject.file("ads.properties").inputStream().use { load(it) }
+    setProperty("admob.appId", "ca-app-pub-3940256099942544~3347511713")
+    setProperty("admob.bannerId", "ca-app-pub-3940256099942544/9214589741")
+    setProperty("admob.interstitialId", "ca-app-pub-3940256099942544/1033173712")
+    val f = rootProject.file("ads.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {

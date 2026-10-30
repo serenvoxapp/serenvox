@@ -32,3 +32,10 @@
 4. **Privacy & messaging**: create a **GDPR consent message** and a **US state regulations message** for the app (the app's UMP code shows them automatically).
 5. **app-ads.txt**: Play listing needs a developer website; host `https://<your-domain>/app-ads.txt` containing the line AdMob gives you, e.g. `google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0`.
 6. Payments/tax info in AdMob (Canadian tax forms).
+
+## Open source / GPL-3.0 compliance (do BEFORE publishing)
+1. Create a public repository (e.g. GitHub `serenvox`) and push this repo. **Never** push `keystore/`, `keystore.properties`, `ads.properties` (all git-ignored).
+2. Set `SOURCE_URL` in `app/src/main/java/com/serenvox/app/ui/AppRoot.kt` to that repo URL, rebuild, and tag each release (e.g. `v1.0.0`) so the source matches every published AAB.
+3. Put the repo link in the Play listing full description (`[SOURCE_URL]` placeholder) and on your website.
+4. Keep `app/libs/sherpa-onnx-2.0.1.aar` version noted; link upstream sources for sherpa-onnx and eSpeak NG (README does).
+5. Remember: anyone may legally rebuild and redistribute Serenvox (that's the GPL). Your brand name, Play listing and signing key remain yours; consider a trademark notice if you care about the name.

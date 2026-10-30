@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 Ryan Lu
 # sherpa-onnx: JNI accesses Kotlin config classes/fields by name.
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -keepclassmembers class com.k2fsa.sherpa.onnx.** { *; }

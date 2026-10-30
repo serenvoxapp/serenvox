@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright 2026 Ryan Lu
 package com.serenvox.app.billing
 
 import android.app.Activity

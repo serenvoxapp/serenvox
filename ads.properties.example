@@ -1,3 +1,5 @@
+# Copy to ads.properties (git-ignored) and put your real AdMob IDs there.
+# If ads.properties is missing, the build uses the Google TEST IDs below.
 # AdMob configuration. These defaults are GOOGLE TEST IDs - safe for development.
 # Before publishing, replace with your real IDs from https://apps.admob.com
 # (App ID uses "~", ad unit IDs use "/").

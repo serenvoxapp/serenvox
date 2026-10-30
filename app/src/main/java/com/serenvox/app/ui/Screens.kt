@@ -36,6 +36,8 @@ import androidx.compose.ui.semantics.semantics
 import com.serenvox.app.tts.VoiceCatalog
 import com.serenvox.app.tts.KokoroPack
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
@@ -180,9 +182,29 @@ private fun ReaderView(player: PlayerState, onSeek: (Int) -> Unit) {
 // ------------------------------------------------------------------ Player
 
 @Composable
+fun RepeatButton(mode: com.serenvox.app.tts.RepeatMode, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val on = mode != com.serenvox.app.tts.RepeatMode.OFF
+    val label = when (mode) {
+        com.serenvox.app.tts.RepeatMode.OFF -> "Repeat off"
+        com.serenvox.app.tts.RepeatMode.ALL -> "Repeat document"
+        com.serenvox.app.tts.RepeatMode.ONE -> "Repeat paragraph"
+    }
+    Box(Modifier.size(44.dp).clip(CircleShape)
+        .then(if (on) Modifier.background(c.primaryContainer) else Modifier)
+        .clickable(onClickLabel = "Change repeat mode", onClick = onClick)
+        .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center) {
+        Icon(if (mode == com.serenvox.app.tts.RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat, null,
+            Modifier.size(22.dp), tint = if (on) c.primary else c.onSurfaceVariant)
+    }
+}
+
+@Composable
 fun PlayerBar(
     player: PlayerState, speed: Float, sleepMinutesLeft: Int?, enabled: Boolean,
     onPlayPause: () -> Unit, onBack: () -> Unit, onForward: () -> Unit, onSpeed: () -> Unit, onSleep: () -> Unit, onStop: () -> Unit,
+    repeatMode: com.serenvox.app.tts.RepeatMode = com.serenvox.app.tts.RepeatMode.OFF, onRepeat: () -> Unit = {},
 ) {
     val c = MaterialTheme.colorScheme
     val progress by animateFloatAsState(player.progress, label = "p")
@@ -214,6 +236,7 @@ fun PlayerBar(
                 else Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(34.dp))
             }
             IconButton(onClick = onForward, enabled = player.status != Status.IDLE) { Icon(Icons.Default.FastForward, "Next sentence", Modifier.size(30.dp)) }
+            RepeatButton(repeatMode, onRepeat)
             Box(Modifier.clip(CircleShape).background(c.surfaceContainerHighest).clickable(onClick = onSpeed).padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Text("${fmt(speed)}×", style = MaterialTheme.typography.labelLarge)
             }

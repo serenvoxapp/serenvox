@@ -47,8 +47,8 @@ android {
         applicationId = "com.serenvox.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.2.3"
+        versionCode = 8
+        versionName = "1.2.4"
         buildConfigField("boolean", "TEST_BUILD", "false")
         buildConfigField("String", "ADS_TEST_DEVICE_IDS", str(adsProp("admob.testDeviceIds")))
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }

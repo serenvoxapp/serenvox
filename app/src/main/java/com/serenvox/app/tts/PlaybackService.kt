@@ -40,9 +40,18 @@ class PlaybackService : Service() {
                 override fun onPlay() = player.resume()
                 override fun onPause() = player.pause()
                 override fun onStop() = player.stop()
+                override fun onSetRepeatMode(repeatMode: Int) {
+                    val m = when (repeatMode) {
+                        PlaybackStateCompat.REPEAT_MODE_ONE -> RepeatMode.ONE
+                        PlaybackStateCompat.REPEAT_MODE_ALL, PlaybackStateCompat.REPEAT_MODE_GROUP -> RepeatMode.ALL
+                        else -> RepeatMode.OFF
+                    }
+                    (application as SerenvoxApp).prefs.setRepeatMode(m); player.setRepeatMode(m)
+                }
             })
             isActive = true
         }
+        scope.launch { player.repeatMode.collect { session.setRepeatMode(it.toSession()) } }
         ServiceCompat.startForeground(this, NOTIF_ID, build(player.state.value),
             if (android.os.Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0)
         scope.launch {
@@ -71,7 +80,7 @@ class PlaybackService : Service() {
         val st = if (s.status == Status.PAUSED) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_PLAYING
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
-                PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP)
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or PlaybackStateCompat.ACTION_SET_REPEAT_MODE)
             .setState(st, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f).build())
         session.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, s.chunks.getOrNull(s.index) ?: "")
@@ -109,4 +118,10 @@ class PlaybackService : Service() {
         const val ACTION_STOP = "stop"
         fun start(ctx: Context) = ContextCompat.startForegroundService(ctx, Intent(ctx, PlaybackService::class.java))
     }
+}
+
+internal fun RepeatMode.toSession() = when (this) {
+    RepeatMode.OFF -> PlaybackStateCompat.REPEAT_MODE_NONE
+    RepeatMode.ALL -> PlaybackStateCompat.REPEAT_MODE_ALL
+    RepeatMode.ONE -> PlaybackStateCompat.REPEAT_MODE_ONE
 }

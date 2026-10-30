@@ -4,7 +4,7 @@
 Serenvox reads any text aloud with natural neural voices that run **entirely on the device** —
 no cloud, no account, works offline after a one-time voice download.
 
-Features: type/paste/import .txt, "Share to" / text-selection receiver, play/pause/stop, speed & pitch,
+Features: type/paste/import .txt, "Share to" / text-selection receiver, play/pause/stop, repeat (document or paragraph), speed & pitch,
 voice manager (download/preview/delete), sentence highlighting, long-text chunking, background playback
 with media notification, WAV export & share, dark mode / Material You. Falls back to Android's system TTS.
 Free with ads (AdMob banner + rare capped interstitial, UMP consent); one-time `remove_ads` purchase.

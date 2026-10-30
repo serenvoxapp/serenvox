@@ -22,6 +22,7 @@ class SerenvoxApp : Application() {
         prefs = Prefs(this)
         voices = VoiceManager(this)
         player = SpeechPlayer(this, voices)
+        player.setRepeatMode(prefs.repeatMode.value)
         library = LibraryRepo(this)
         importer = DocumentImporter(this)
         billing = BillingManager(this).also { it.connect() }

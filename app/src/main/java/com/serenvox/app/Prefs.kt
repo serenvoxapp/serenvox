@@ -25,6 +25,10 @@ class Prefs(context: Context) {
     private val _speaker = MutableStateFlow(sp.getInt("speaker", 0))
     val speaker: StateFlow<Int> = _speaker
 
+    private val _repeat = MutableStateFlow(com.serenvox.app.tts.RepeatMode.parse(sp.getString("repeatMode", null)))
+    val repeatMode: StateFlow<com.serenvox.app.tts.RepeatMode> = _repeat
+    fun setRepeatMode(m: com.serenvox.app.tts.RepeatMode) { _repeat.value = m; sp.edit().putString("repeatMode", m.name).apply() }
+
     private val _dynamic = MutableStateFlow(sp.getBoolean("dynamicColor", false))
     val dynamicColor: StateFlow<Boolean> = _dynamic
     private val _onboarded = MutableStateFlow(sp.getBoolean("onboarded", false))

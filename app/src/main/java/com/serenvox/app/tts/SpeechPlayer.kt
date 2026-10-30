@@ -31,6 +31,25 @@ import kotlin.coroutines.coroutineContext
 
 enum class Status { IDLE, PREPARING, PLAYING, PAUSED }
 
+/** Repeat behaviour when a sentence or the document finishes. */
+enum class RepeatMode {
+    OFF, ALL, ONE;
+
+    /** Next mode in the UI cycle: Off -> Repeat document -> Repeat paragraph -> Off. */
+    fun next(): RepeatMode = when (this) { OFF -> ALL; ALL -> ONE; ONE -> OFF }
+
+    /** Index to speak after [i] of [size] chunks, or null when playback should end. */
+    fun nextIndex(i: Int, size: Int): Int? = when (this) {
+        ONE -> i
+        ALL -> if (i + 1 < size) i + 1 else 0
+        OFF -> if (i + 1 < size) i + 1 else null
+    }
+
+    companion object {
+        fun parse(v: String?): RepeatMode = entries.firstOrNull { it.name == v } ?: OFF
+    }
+}
+
 data class PlayerState(
     val status: Status = Status.IDLE,
     val chunks: List<String> = emptyList(),
@@ -109,6 +128,24 @@ class SpeechPlayer internal constructor(
     data class Args(val voiceId: String, val speed: Float, val pitch: Float, val speaker: Int)
     @Volatile private var lastArgs: Args? = null
 
+    @Volatile private var repeat = RepeatMode.OFF
+    /** Set when the repeat mode changed while paused: resume restarts so the new mode applies. */
+    @Volatile private var restartOnResume = false
+    private val _repeatMode = MutableStateFlow(RepeatMode.OFF)
+    val repeatMode: StateFlow<RepeatMode> = _repeatMode
+
+    /** Changes the repeat mode; an active session restarts at the current sentence so queued audio follows it. */
+    fun setRepeatMode(mode: RepeatMode) {
+        if (repeat == mode) return
+        repeat = mode; _repeatMode.value = mode
+        val s = _state.value; val a = lastArgs ?: return
+        when (s.status) {
+            Status.PLAYING, Status.PREPARING -> start(s.chunks, a, s.index)
+            Status.PAUSED -> restartOnResume = true
+            Status.IDLE -> {}
+        }
+    }
+
     private val _sleepEndsAt = MutableStateFlow<Long?>(null)
     /** Wall-clock millis when the sleep timer pauses playback, or null when off. */
     val sleepEndsAt: StateFlow<Long?> = _sleepEndsAt
@@ -141,6 +178,7 @@ class SpeechPlayer internal constructor(
     private fun start(chunks: List<String>, args: Args, from: Int) {
         if (chunks.isEmpty()) return
         lastArgs = args
+        restartOnResume = false
         val start = from.coerceIn(0, chunks.lastIndex)
         val g = gen.incrementAndGet()
         val name = if (neural.isAvailable(args.voiceId)) neural.displayName(args.voiceId) else "System voice"
@@ -203,7 +241,7 @@ class SpeechPlayer internal constructor(
         if (s.status != Status.PAUSED) return
         val a = lastArgs ?: return
         val k = sink
-        if (k != null && !systemActive && job?.isActive == true) {
+        if (k != null && !systemActive && job?.isActive == true && !restartOnResume) {
             paused = false; k.play()
             _state.update { it.copy(status = Status.PLAYING) }
         } else start(s.chunks, a, s.index)
@@ -238,11 +276,13 @@ class SpeechPlayer internal constructor(
             if (!paused) t.play()
             val queue = Channel<Pair<Int, FloatArray>>(capacity = 2)
             val producer = launch(synthDispatcher) {
-                for (i in from until chunks.size) {
+                var i: Int? = from
+                while (i != null) {
                     ensureActive()
                     val samples = synth.generate(chunks[i], a.speed)
                     ensureActive()
                     queue.send(i to samples)
+                    i = repeat.nextIndex(i, chunks.size)
                 }
                 queue.close()
             }
@@ -297,10 +337,19 @@ class SpeechPlayer internal constructor(
         systemActive = true
         tts.configure(a.speed, a.pitch,
             onStart = { id -> UtteranceId.parse(id)?.let { (ug, i) -> if (ug == g) upd(g) { it.copy(status = Status.PLAYING, index = i) } } },
-            onDone = { id -> UtteranceId.parse(id)?.let { (ug, i) -> if (ug == g && i == chunks.lastIndex) upd(g) { it.copy(status = Status.IDLE, index = it.chunks.size) } } },
+            onDone = { id -> UtteranceId.parse(id)?.let { (ug, i) ->
+                if (ug != g || gen.get() != g) return@let
+                when (repeat) {
+                    // Queue is spoken one paragraph (ONE) or one pass (ALL/OFF) at a time; refill when it drains.
+                    RepeatMode.ONE -> tts.speak(chunks[i], UtteranceId.of(g, i), flush = false)
+                    RepeatMode.ALL -> if (i == chunks.lastIndex) for (j in chunks.indices) tts.speak(chunks[j], UtteranceId.of(g, j), flush = false)
+                    RepeatMode.OFF -> if (i == chunks.lastIndex) upd(g) { it.copy(status = Status.IDLE, index = it.chunks.size) }
+                }
+            } },
             onError = { id -> UtteranceId.parse(id)?.let { (ug, _) -> if (ug == g) upd(g) { it.copy(status = Status.IDLE, error = "Speech error") } } },
         )
-        for (i in from until chunks.size) tts.speak(chunks[i], UtteranceId.of(g, i), flush = i == from)
+        if (repeat == RepeatMode.ONE) tts.speak(chunks[from], UtteranceId.of(g, from), flush = true)
+        else for (i in from until chunks.size) tts.speak(chunks[i], UtteranceId.of(g, i), flush = i == from)
     }
 
     /** Renders text to a WAV file with the neural voice. Calls [onProgress] with 0..1. */

@@ -103,6 +103,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
     val adsReady by activity.ads.ready.collectAsStateWithLifecycle()
     val library by app.library.items.collectAsStateWithLifecycle()
     val sleepEnd by player.sleepEndsAt.collectAsStateWithLifecycle()
+    val repeatMode by player.repeatMode.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var tab by rememberSaveable { mutableStateOf(Tab.READ) }
@@ -219,7 +220,8 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                                 onSeek = { player.seekTo(it) })
                         }
                         PlayerBar(state, speed, sleepLeft, text.isNotBlank() && !importing, ::playPause,
-                            { player.skip(-1) }, { player.skip(1) }, { speedSheet = true }, { sleepSheet = true }, { player.stop() })
+                            { player.skip(-1) }, { player.skip(1) }, { speedSheet = true }, { sleepSheet = true }, { player.stop() },
+                            repeatMode = repeatMode, onRepeat = { repeatMode.next().let { prefs.setRepeatMode(it); player.setRepeatMode(it) } })
                     }
                     Tab.VOICES -> {
                       val samples = remember { com.serenvox.app.tts.SamplePlayer(activity) }

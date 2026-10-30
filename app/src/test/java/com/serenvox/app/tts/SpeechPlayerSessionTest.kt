@@ -182,4 +182,45 @@ class SpeechPlayerSessionTest {
         assertEquals(7L to 12, UtteranceId.parse(UtteranceId.of(7, 12)))
         assertEquals(null, UtteranceId.parse("12"))
     }
+
+    @Test fun repeatModeCyclesAndPicksNextIndex() {
+        assertEquals(RepeatMode.ALL, RepeatMode.OFF.next())
+        assertEquals(RepeatMode.ONE, RepeatMode.ALL.next())
+        assertEquals(RepeatMode.OFF, RepeatMode.ONE.next())
+        assertEquals(null, RepeatMode.OFF.nextIndex(4, 5)); assertEquals(3, RepeatMode.OFF.nextIndex(2, 5))
+        assertEquals(0, RepeatMode.ALL.nextIndex(4, 5)); assertEquals(3, RepeatMode.ALL.nextIndex(2, 5))
+        assertEquals(2, RepeatMode.ONE.nextIndex(2, 5))
+        assertEquals(RepeatMode.OFF, RepeatMode.parse(null)); assertEquals(RepeatMode.ONE, RepeatMode.parse("ONE"))
+    }
+
+    @Test fun repeatDocumentRestartsFromBeginning() {
+        player.setRepeatMode(RepeatMode.ALL)
+        player.playChunks(chunks.take(3), args(1), 1)
+        val seen = HashSet<Int>()
+        val end = System.currentTimeMillis() + 1200 // > 2 passes of 3 sentences
+        while (System.currentTimeMillis() < end) { current?.audible()?.let { seen.add(it % 1000) }; Thread.sleep(5) }
+        assertTrue("stopped instead of looping", player.state.value.status != Status.IDLE)
+        assertTrue("never wrapped to sentence 0: $seen", 0 in seen)
+        assertInvariants()
+    }
+
+    @Test fun repeatParagraphLoopsCurrentSentence() {
+        player.setRepeatMode(RepeatMode.ONE)
+        player.playChunks(chunks, args(1), 5)
+        Thread.sleep(150)
+        val (_, total) = watch(500, 1) { it == 5 }
+        assertTrue("nothing played", total > 20)
+        assertEquals(5, player.state.value.index)
+        assertInvariants()
+    }
+
+    @Test fun sleepTimerStillPausesWhileRepeating() {
+        player.setRepeatMode(RepeatMode.ONE)
+        player.playChunks(chunks, args(1), 0)
+        Thread.sleep(200)
+        player.pause() // what the sleep timer does when it fires
+        Thread.sleep(100)
+        assertEquals(Status.PAUSED, player.state.value.status)
+        assertEquals(0, activeSinks.get())
+    }
 }

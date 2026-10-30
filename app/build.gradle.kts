@@ -49,6 +49,7 @@ android {
         targetSdk = 36
         versionCode = 7
         versionName = "1.2.3"
+        buildConfigField("boolean", "TEST_BUILD", "false")
         buildConfigField("String", "ADS_TEST_DEVICE_IDS", str(adsProp("admob.testDeviceIds")))
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
@@ -73,6 +74,15 @@ android {
             manifestPlaceholders["admobAppId"] = releaseAds.first
             buildConfigField("String", "BANNER_ID", str(releaseAds.second))
             buildConfigField("String", "INTERSTITIAL_ID", str(releaseAds.third))
+        }
+        // Sideload QA: release code/signing/applicationId (installs over store builds), Google TEST ads.
+        create("qa") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            manifestPlaceholders["admobAppId"] = TestAds.APP
+            buildConfigField("String", "BANNER_ID", str(TestAds.BANNER))
+            buildConfigField("String", "INTERSTITIAL_ID", str(TestAds.INTERSTITIAL))
+            buildConfigField("boolean", "TEST_BUILD", "true")
         }
         debug {
             applicationIdSuffix = ".debug"

@@ -178,7 +178,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
         bottomBar = {
             Column {
                 if (tab != Tab.READ && state.status != Status.IDLE) MiniPlayer(title, state, { tab = Tab.READ }, ::playPause)
-                if (!adFree && adsReady) BannerAd()
+                if (!adFree && adsReady) { BannerAd(); androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp)) }
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     Tab.entries.forEach { t ->
                         NavigationBarItem(tab == t, { tab = t }, { Icon(t.icon, null) }, label = { Text(t.label) })
@@ -249,7 +249,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                         val dyn by prefs.dynamicColor.collectAsStateWithLifecycle()
                         val price by app.billing.price.collectAsStateWithLifecycle()
                         SettingsScreen(theme, dyn, Build.VERSION.SDK_INT >= 31, adFree, price, activity.ads.privacyOptionsRequired,
-                            BuildConfig.VERSION_NAME, prefs::setTheme, prefs::setDynamicColor, { app.billing.buy(activity) }, { app.billing.restore() },
+                            (if (BuildConfig.TEST_BUILD) BuildConfig.VERSION_NAME + " · Test build" else BuildConfig.VERSION_NAME), prefs::setTheme, prefs::setDynamicColor, { app.billing.buy(activity) }, { app.billing.restore() },
                             { activity.ads.showPrivacyOptions() }, { licences = true },
                             { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))) },
                             { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL))) },

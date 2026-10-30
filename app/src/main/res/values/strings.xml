@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App display name: change here only. -->
+    <string name="app_name">Serenvox</string>
+    <string name="share_label">Read aloud with Serenvox</string>
+    <string name="notif_channel">Playback</string>
+</resources>

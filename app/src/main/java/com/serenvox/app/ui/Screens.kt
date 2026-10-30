@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.serenvox.app.tts.VoiceCatalog
+import com.serenvox.app.tts.KokoroPack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -280,6 +281,7 @@ fun VoicesScreen(
     onDownload: (VoiceInfo) -> Unit, onUse: (String) -> Unit, onSample: (String) -> Unit, onDelete: (VoiceInfo) -> Unit,
     onSpeaker: (Int) -> Unit,
     previewing: String? = null, onPreview: (String) -> Unit = {},
+    engineInstalled: Boolean = false,
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item { ScreenTitle("Voices", "Natural AI voices that run fully on your phone") }
@@ -291,9 +293,10 @@ fun VoicesScreen(
             val idx = voices.indexOf(v)
             if (idx == 0 || voices[idx - 1].engine != v.engine) SectionHeader(
                 if (v.isKokoro) "Natural · recommended" else "Compact · smaller and faster",
-                if (v.isKokoro) "One ${v.sizeMb} MB download includes every natural voice" else "Lighter voices for older phones or less storage")
+                if (v.isKokoro) (if (engineInstalled) "Engine installed · each extra voice is 0.5 MB"
+                    else "First voice ${KokoroPack.ENGINE_MB} MB (shared engine) · each extra voice 0.5 MB") else "Lighter voices for older phones or less storage")
             VoiceCard(v.id, v.name, "${v.description} · ${v.locale}",
-                if (v.isKokoro) "${v.licence} · ${v.sizeMb} MB pack, shared" else "${v.licence} · ${v.sizeMb} MB",
+                if (v.isKokoro) "${v.licence} · ${KokoroPack.sizeLabel(engineInstalled)}" else "${v.licence} · ${v.sizeMb} MB",
                 states[v.id] ?: VoiceState.NotInstalled, selected == v.id,
                 { onDownload(v) }, { onUse(v.id) }, { onSample(v.id) }, { onDelete(v) },
                 VoiceCatalog.sampleKey(v.id, speaker), previewing == VoiceCatalog.sampleKey(v.id, speaker), onPreview)
@@ -483,6 +486,7 @@ fun OnboardingScreen(
     voices: List<VoiceInfo>, states: Map<String, VoiceState>, chosen: String,
     onChoose: (String) -> Unit, onDownload: () -> Unit, onSkip: () -> Unit,
     previewing: String? = null, onPreview: (String) -> Unit = {},
+    engineInstalled: Boolean = false,
 ) {
     val state = states[chosen]
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -504,7 +508,7 @@ fun OnboardingScreen(
         val shown = VoiceCatalog.onboarding.mapNotNull { id -> voices.firstOrNull { it.id == id } }
         shown.forEachIndexed { i, v ->
             if (i == 0 || shown[i - 1].engine != v.engine) Text(
-                if (v.isKokoro) "Natural · ${v.sizeMb} MB, includes all natural voices" else "Compact · smaller and faster",
+                if (v.isKokoro) "Natural · ${KokoroPack.ENGINE_MB} MB for your first voice, 0.5 MB for each extra" else "Compact · smaller and faster",
                 style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
             val sel = v.id == chosen
@@ -515,7 +519,7 @@ fun OnboardingScreen(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(v.name, style = MaterialTheme.typography.titleSmall)
-                    Text(if (v.isKokoro) v.description else "${v.description} · ${v.sizeMb} MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (v.isKokoro) "${v.description} · ${KokoroPack.sizeLabel(engineInstalled)}" else "${v.description} · ${v.sizeMb} MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 VoiceCatalog.sampleKey(v.id)?.let { k -> PreviewButton(previewing == k) { onPreview(k) } }
                 RadioButton(sel, { onChoose(v.id) })

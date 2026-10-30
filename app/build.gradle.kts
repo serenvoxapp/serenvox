@@ -29,8 +29,8 @@ android {
         applicationId = "com.serenvox.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.2.1"
         manifestPlaceholders["admobAppId"] = adsProps.getProperty("admob.appId")
         buildConfigField("String", "BANNER_ID", "\"${adsProps.getProperty("admob.bannerId")}\"")
         buildConfigField("String", "INTERSTITIAL_ID", "\"${adsProps.getProperty("admob.interstitialId")}\"")
@@ -88,7 +88,7 @@ android {
 }
 
 dependencies {
-    implementation(files("libs/sherpa-onnx-2.0.1.aar"))
+    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
     implementation("com.google.mlkit:text-recognition:16.0.1") // bundled Latin OCR model, offline
     implementation("org.apache.commons:commons-compress:1.27.1")
 

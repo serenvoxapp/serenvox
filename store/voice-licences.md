@@ -43,6 +43,8 @@ Test: a 6.9 s sentence, after warm-up. Real-time factor (RTF) = synthesis time �
 | Piper ljspeech-medium | 64 MB | ~65 MB | 0.04 | — | — |
 | Kokoro v1.0 fp32 | 333 MB | ~380 MB | 0.29 | 0.19 | ~750 MB (process) |
 | Kokoro v1.0 int8 | 126 MB | 183 MB | 0.86 | 0.70 | ~585 MB (process) |
+| **Kokoro v1.0 fp16 weights (1.2.1 engine, trimmed)** | **149 MB + 0.5 MB/voice** | **~170 MB** | **0.30** | **0.18** | as fp32 (weights cast to fp32 at load) |
+| Kokoro v1.0 full fp16 (onnxconverter-common keep_io_types) | — | 164 MB | fails to load | — | — |
 
 - On this CPU, the dynamically quantised int8 model is about 4× **slower** than fp32 (ConvInteger kernels), even though it is smaller.
 - Phone estimate (rule of thumb: a mid-range Cortex-A78 core is about 2–3× slower than this Xeon core):
@@ -51,3 +53,9 @@ Test: a 6.9 s sentence, after warm-up. Real-time factor (RTF) = synthesis time �
   - int8 on ARM: unmeasured. It is likely around 1.0 or slower, so it is not chosen despite the smaller download.
   - RAM: about 350–450 MB for the model while speaking.
 - **Decision:** ship fp32 Kokoro v1.0 as the "Natural" pack and keep Piper as "Compact". This is still to be confirmed on Ryan's phone.
+
+## 1.2.1 engine
+- fp16 *weights*, fp32 compute: every float initializer ≥1024 elements stored as fp16 with a Cast to fp32 (ORT folds these at session start). Output vs fp32: long-term spectrum within 0.12 dB, utterance length within 1 ms (int8: 2.5 dB, 140 ms), same sample durations for the comparison paragraph. Speed equals fp32. Full fp16 conversion (onnxconverter-common / onnxruntime.transformers, keep_io_types) produced invalid graphs (Cast type mismatch, duplicate node names), and fp16 compute on ARM CPU EP has partial kernel coverage anyway.
+- Trimmed: zh lexicon, jieba dict, zh FSTs, voices for all 54 speakers, all non-English eSpeak data (19 MB → 0.85 MB: phontab/phonindex/phondata/intonations/en_dict + lang/gmw/en*).
+- Voices: each speaker is a 522,240-byte style file; the app writes it into a zero-filled 54-speaker voices.bin at its speaker id (tested in sherpa-onnx 1.13.8 with only 2 speakers present).
+- Runtime: sherpa-onnx **1.13.8** AAR. 2.0.x removed the built-in eSpeak NG phonemizer: Kokoro silently skipped any word not in the lexicon ("belongs" on US voices) and Piper voices produced no audio. Regression check: tools/phoneme_regression.py.

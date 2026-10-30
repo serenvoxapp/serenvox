@@ -65,6 +65,7 @@ fun AppRoot(activity: MainActivity, app: SerenvoxApp) {
     SerenvoxTheme(dark, dynamic) {
         val onboarded by prefs.onboarded.collectAsStateWithLifecycle()
         val voiceStates by app.voices.states.collectAsStateWithLifecycle()
+        val engineInstalled by app.voices.engineInstalled.collectAsStateWithLifecycle()
         val scope = rememberCoroutineScope()
         if (!onboarded) {
             var chosen by rememberSaveable { mutableStateOf(VoiceCatalog.voices.first().id) }
@@ -77,7 +78,7 @@ fun AppRoot(activity: MainActivity, app: SerenvoxApp) {
             LaunchedEffect(chosen) { samples.stop() }
             Surface { OnboardingScreen(VoiceCatalog.voices, voiceStates, chosen, { chosen = it },
                 { samples.stop(); val v = VoiceCatalog.byId(chosen)!!; scope.launch { app.voices.download(v) } },
-                { samples.stop(); prefs.setOnboarded() }, previewing, { samples.toggle(it) }) }
+                { samples.stop(); prefs.setOnboarded() }, previewing, { samples.toggle(it) }, engineInstalled) }
             return@SerenvoxTheme
         }
         MainShell(activity, app)
@@ -94,6 +95,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
     val voice by prefs.voice.collectAsStateWithLifecycle()
     val speaker by prefs.speaker.collectAsStateWithLifecycle()
     val voiceStates by app.voices.states.collectAsStateWithLifecycle()
+    val engineInstalled by app.voices.engineInstalled.collectAsStateWithLifecycle()
     val adFree by app.billing.adFree.collectAsStateWithLifecycle()
     val adsReady by activity.ads.ready.collectAsStateWithLifecycle()
     val library by app.library.items.collectAsStateWithLifecycle()
@@ -229,7 +231,7 @@ private fun MainShell(activity: MainActivity, app: SerenvoxApp) {
                         },
                         onDelete = { v -> player.stop(); app.voices.delete(v); if (prefs.voice.value == v.id) prefs.setVoice(Prefs.SYSTEM_VOICE) },
                         onSpeaker = { prefs.setSpeaker(it) },
-                        previewing = previewing, onPreview = { player.stop(); samples.toggle(it) })
+                        previewing = previewing, onPreview = { player.stop(); samples.toggle(it) }, engineInstalled = engineInstalled)
                     }
                     Tab.LIBRARY -> LibraryScreen(library,
                         onOpen = { item ->

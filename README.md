@@ -38,7 +38,7 @@ components such as eSpeak NG.
 ## Third-party components
 | Component | Licence |
 |---|---|
-| [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 2.0.1 (`app/libs/`, prebuilt AAR) | Apache-2.0 |
+| [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 (`app/libs/`, prebuilt AAR; pinned: >= 2.0.0 removed the built-in eSpeak NG phonemizer) | Apache-2.0 |
 | [eSpeak NG](https://github.com/espeak-ng/espeak-ng) (statically linked in sherpa-onnx native lib; `espeak-ng-data` shipped with voices) | GPL-3.0-or-later |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime) | MIT |
 | [Piper](https://github.com/rhasspy/piper) / piper-phonemize | MIT |
